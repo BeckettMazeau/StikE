@@ -12,10 +12,9 @@ void setup() {
   } else {
     Serial.println("PSRAM is not enabled or not found.");
   }
-  GxEPD2_Example::setup();
+  setup_example();
 }
 
 void loop() {
   // Run the e-paper display example
-  GxEPD2_Example::loop();  
 }

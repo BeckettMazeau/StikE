@@ -19,20 +19,14 @@
 //
 // Add new topics in https://forum.arduino.cc/c/using-arduino/displays/23 for
 // new questions and issues
-
+#include "GxEPD2_Example.h"
 // base class GxEPD2_GFX can be used to pass references or pointers to the
 // display instance as parameter, uses ~1.2k more code enable or disable
 // GxEPD2_GFX base class
 #define ENABLE_GxEPD2_GFX 0
-#include <Arduino.h>
-#include <Fonts/FreeMonoBold12pt7b.h>
-#include <Fonts/FreeMonoBold9pt7b.h>
-#include <Fonts/FreeSansBold24pt7b.h>
-#include <GxEPD2_BW.h>
 
 // select the display class and display driver class in the following file
 // (new style):
-#include "GxEPD2_display_selection_new_style.h"
 
 // #define WITHOUT_BITMAPS
 #ifndef WITHOUT_BITMAPS
@@ -48,15 +42,8 @@
 #include "bitmaps/Bitmaps128x250.h" // 2.13" b/w
 
 #endif
-#if defined(ESP32) || defined(ESP_PLATFORM) || defined(ARDUINO_ARCH_RP2040)
-#endif
 
-#else
-#include "bitmaps/Bitmaps128x250.h" // 2.13" b/w
-#endif
-#endif
-
-void setup() {
+void setup_example() {
   Serial.begin(115200);
   // delay(5000);
   Serial.println();
@@ -67,12 +54,8 @@ void setup() {
   pinMode(7, OUTPUT);
   digitalWrite(7, HIGH); // enable power to the panel
 #endif
-  // display.init(115200); // default 10ms reset pulse, e.g. for bare panels
+    display.init(115200); // default 10ms reset pulse, e.g. for bare panels
   // with DESPI-C02
-  display.init(115200, true, 10, false, SPIn,
-               SPISettings(4000000, MSBFIRST,
-                           SPI_MODE0)); // extended init method with SPI channel
-                                        // and/or settings selection
   if (display.pages() > 1) {
     delay(100);
     Serial.print("pages = ");
@@ -97,9 +80,10 @@ void setup() {
   // helloValue(123.9, 1);
   // delay(1000);
   showFont("FreeMonoBold9pt7b", &FreeMonoBold9pt7b);
-  // showFont("FreeMonoBold12pt7b", &FreeMonoBold12pt7b);
+  //showFont("FreeMonoBold12pt7b", &FreeMonoBold12pt7b);
   delay(1000);
-  if (display.epd2.WIDTH < 104) {
+  if (display.epd2.WIDTH < 104)
+  {
     showFont("glcdfont", 0);
     delay(1000);
   }
@@ -109,11 +93,6 @@ void setup() {
   drawBitmaps();
   // display.powerOff(); return;
   drawGraphics();
-  if ((display.epd2.panel == GxEPD2::GDEM035F51) ||
-      (display.epd2.panel == GxEPD2::GDEM0397F81)) {
-    draw4colors();
-    delay(4000);
-  }
   // display.powerOff(); return;
 #if !defined(__AVR) // takes too long!
   if ((display.epd2.panel == GxEPD2::ACeP565) ||
@@ -121,10 +100,7 @@ void setup() {
       (display.epd2.panel == GxEPD2::ACeP730) ||
       (display.epd2.panel == GxEPD2::GDEP0565D90) ||
       (display.epd2.panel == GxEPD2::GDEP073E01)) {
-    // draw7colorlines();
     // delay(2000);
-    draw7colors();
-    delay(4000);
     display.epd2.drawNativeColors();
     delay(2000);
     // display.powerOff(); return;
@@ -140,10 +116,6 @@ void setup() {
   display.powerOff();
   deepSleepTest();
   // deepSleepTestPartialUpdate();
-#if defined(ESP32) && defined(_GxBitmaps1304x984_H_)
-  drawBitmaps1304x984();
-  display.powerOff();
-#endif
   Serial.println("setup done");
   display.end();
 }
