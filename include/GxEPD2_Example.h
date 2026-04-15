@@ -6,9 +6,11 @@
 #include <Fonts/FreeMonoBold9pt7b.h>
 #include <Fonts/FreeSansBold24pt7b.h>
 #include <GxEPD2_BW.h>
+#include "GxEPD2_display_selection_new_style.h"
+#include "GxEPD2_selection_check.h"
 
 // Enable GxEPD2 GFX compatibility (0 = disable, 1 = enable)
-#define ENABLE_GxEPD2_GFX 0
+//#define ENABLE_GxEPD2_GFX 1
 
 // Struct for bitmap pairs (used by color display examples - included for completeness)
 struct bitmap_pair {
@@ -17,7 +19,7 @@ struct bitmap_pair {
 };
 
 // Global display instance declaration (defined in .cpp)
-extern GxEPD2::GxEPD2<GxEPD2_128x250, GxEPD2_Driver_v2> display;
+//extern GxEPD2<GxEPD2_128x250, GxEPD2_Driver_v2> display;
 
 // ============================================================================
 // Text Display Functions
@@ -32,7 +34,8 @@ void helloStripe(uint16_t pw_xe);
 void showFont(const char name[], const GFXfont *f = nullptr);
 void drawFont(const char name[], const GFXfont *f = nullptr);
 void printText(int x, int y, const char *text, uint8_t font);
-
+void deepSleepTest();
+void deepSleepTestPartialUpdate();
 // ============================================================================
 // Graphics Test Functions
 // ============================================================================
@@ -64,7 +67,7 @@ void drawBitmaps128x250();
 // Setup and Loop Entry Points
 // ============================================================================
 
-void setup();
+void setup_example();
 void loop();
 
 #endif // _GxEPD2_Example_H_

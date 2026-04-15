@@ -23,7 +23,7 @@
 // base class GxEPD2_GFX can be used to pass references or pointers to the
 // display instance as parameter, uses ~1.2k more code enable or disable
 // GxEPD2_GFX base class
-#define ENABLE_GxEPD2_GFX 0
+//#define ENABLE_GxEPD2_GFX 1
 
 // select the display class and display driver class in the following file
 // (new style):
@@ -42,7 +42,7 @@
 #include "bitmaps/Bitmaps128x250.h" // 2.13" b/w
 
 #endif
-
+#endif
 void setup_example() {
   Serial.begin(115200);
   // delay(5000);
@@ -54,7 +54,7 @@ void setup_example() {
   pinMode(7, OUTPUT);
   digitalWrite(7, HIGH); // enable power to the panel
 #endif
-    display.init(115200); // default 10ms reset pulse, e.g. for bare panels
+  display.init(115200); // default 10ms reset pulse, e.g. for bare panels
   // with DESPI-C02
   if (display.pages() > 1) {
     delay(100);
@@ -80,10 +80,9 @@ void setup_example() {
   // helloValue(123.9, 1);
   // delay(1000);
   showFont("FreeMonoBold9pt7b", &FreeMonoBold9pt7b);
-  //showFont("FreeMonoBold12pt7b", &FreeMonoBold12pt7b);
+  // showFont("FreeMonoBold12pt7b", &FreeMonoBold12pt7b);
   delay(1000);
-  if (display.epd2.WIDTH < 104)
-  {
+  if (display.epd2.WIDTH < 104) {
     showFont("glcdfont", 0);
     delay(1000);
   }
@@ -119,8 +118,6 @@ void setup_example() {
   Serial.println("setup done");
   display.end();
 }
-
-void loop() {}
 
 // note for partial update window and setPartialWindow() method:
 // partial update window size and position is on byte boundary in physical x
@@ -1430,11 +1427,6 @@ void drawBitmaps1360x480() {
   }
 }
 #endif
-
-struct bitmap_pair {
-  const unsigned char *black;
-  const unsigned char *red;
-};
 
 #ifdef _GxBitmaps3c200x200_H_
 void drawBitmaps3c200x200() {
