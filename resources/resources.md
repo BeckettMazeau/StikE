@@ -1,10 +1,13 @@
 # Chosen Pins
 
 ### ePaper Display Pins
-- CS: 22
+- CS/SS: 22
 - DC: 23
 - RST: 24
 - BUSY: 25
+- SCK: 18
+- MISO: NC
+- MOSI: 16
 
 
 
