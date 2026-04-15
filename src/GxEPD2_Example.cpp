@@ -20,52 +20,17 @@
 // Add new topics in https://forum.arduino.cc/c/using-arduino/displays/23 for
 // new questions and issues
 
-// see GxEPD2_wiring_examples.h for wiring suggestions and examples
-
-// NOTE for use with Waveshare ESP32 Driver Board:
-// **** also need to select the constructor with the parameters for this board
-// in GxEPD2_display_selection_new_style.h ****
-//
-// The Wavehare ESP32 Driver Board uses uncommon SPI pins for the FPC connector.
-// It uses HSPI pins, but SCK and MOSI are swapped. To use HW SPI with the ESP32
-// Driver Board, HW SPI pins need be re-mapped in any case. Can be done using
-// either HSPI or VSPI. Other SPI clients can either be connected to the same
-// SPI bus as the e-paper, or to the other HW SPI bus, or through SW SPI. The
-// logical configuration would be to use the e-paper connection on HSPI with
-// re-mapped pins, and use VSPI for other SPI clients. VSPI with standard VSPI
-// pins is used by the global SPI instance of the Arduino IDE ESP32 package.
-
-// uncomment next line to use HSPI for EPD (and e.g VSPI for SD), e.g. with
-// Waveshare ESP32 Driver Board
-// #define USE_HSPI_FOR_EPD
-
 // base class GxEPD2_GFX can be used to pass references or pointers to the
 // display instance as parameter, uses ~1.2k more code enable or disable
 // GxEPD2_GFX base class
 #define ENABLE_GxEPD2_GFX 0
-
-// uncomment next line to use class GFX of library GFX_Root instead of
-// Adafruit_GFX
-// #include <GFX.h>
-// Note: if you use this with ENABLE_GxEPD2_GFX 1:
-//       uncomment it in GxEPD2_GFX.h too, or add #include <GFX.h> before any
-//       #include <GxEPD2_GFX.h>
 #include <Arduino.h>
-#include <GxEPD2_BW.h>
-// #include <GxEPD2_3C.h>
-// #include <GxEPD2_4C.h>
-// #include <GxEPD2_7C.h>
 #include <Fonts/FreeMonoBold12pt7b.h>
 #include <Fonts/FreeMonoBold9pt7b.h>
 #include <Fonts/FreeSansBold24pt7b.h>
+#include <GxEPD2_BW.h>
 
-
-// select the display constructor line in one of the following files (old
-// style):
-// #include "GxEPD2_display_selection.h"
-// #include "GxEPD2_display_selection_added.h"
-
-// or select the display class and display driver class in the following file
+// select the display class and display driver class in the following file
 // (new style):
 #include "GxEPD2_display_selection_new_style.h"
 
@@ -84,49 +49,11 @@
 
 #endif
 #if defined(ESP32) || defined(ESP_PLATFORM) || defined(ARDUINO_ARCH_RP2040)
-// #include "bitmaps/Bitmaps1304x984.h" // 12.48" b/w
-// #include "bitmaps/Bitmaps1360x480.h" // 10.85" b/w
-// #include "bitmaps/Bitmaps3c1304x984.h" // 12.48" b/w/r
-// #include "bitmaps/Bitmaps7c800x480.h" // 7.3" 7-color
 #endif
 
 #else
 #include "bitmaps/Bitmaps128x250.h" // 2.13" b/w
 #endif
-#endif
-
-#if defined(ARDUINO_ARCH_RP2040) && (defined(ARDUINO_RASPBERRY_PI_PICO) ||     \
-                                     defined(ARDUINO_RASPBERRY_PI_PICO_W))
-#if defined(__MBED__)
-// SPI pins used by GoodDisplay DESPI-PICO. note: steals standard I2C pins
-// PIN_WIRE_SDA (6), PIN_WIRE_SCL (7) uncomment next line for use with
-// GoodDisplay DESPI-PICO. // MbedSPI(int miso, int mosi, int sck);
-arduino::MbedSPI SPIn(4, 7, 6); // need be valid pins for same SPI channel, else
-                                // fails blinking 4 long 4 short
-// uncomment next line for use with my proto board. // MbedSPI(int miso, int
-// mosi, int sck);
-// arduino::MbedSPI SPIn(4, 3, 2); // need be valid pins for same SPI channel,
-// else fails blinking 4 long 4 short
-// uncomment next line for use with Waveshare Pico-ePaper-2.9. // MbedSPI(int
-// miso, int mosi, int sck); note: doesn't work with Waveshare PhotoPainter,
-// conflict on pin 12. use philhower package instead.
-// arduino::MbedSPI SPIn(12, 11, 10); // need be valid pins for same SPI
-// channel, else fails blinking 4 long 4 short
-#else // package https://github.com/earlephilhower/arduino-pico
-// SPIClassRP2040(spi_inst_t *spi, pin_size_t rx, pin_size_t cs, pin_size_t sck,
-// pin_size_t tx); uncomment next line for use with my proto board.
-// SPIClassRP2040 SPIn(spi0, 4, 5, 2, 3); // need be valid pins for same SPI
-// channel, else fails blinking 4 long 4 short
-// uncomment next line for use with Waveshare Pico-ePaper-2.9 or Waveshare
-// PhotoPainter module
-SPIClassRP2040 SPIn(spi1, 12, 13, 10,
-                    11); // need be valid pins for same SPI channel, else fails
-                         // blinking 4 long 4 short
-#endif
-#endif
-
-#if defined(ESP32) && defined(USE_HSPI_FOR_EPD)
-SPIClass hspi(HSPI);
 #endif
 
 void setup() {
@@ -135,7 +62,6 @@ void setup() {
   Serial.println();
   Serial.println("setup");
   delay(100);
-  // SPI.begin(sck, miso, mosi, ss); // preset for remapped pins
   SPI.begin(18, -1, 16, 22);
 #if defined(ESP32) && defined(ARDUINO_ESP32S3_DEV) && true // CrowPanel
   pinMode(7, OUTPUT);
