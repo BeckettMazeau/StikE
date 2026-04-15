@@ -2,12 +2,7 @@
 #define _GxEPD2_Example_H_
 
 #include <Arduino.h>
-#include <Fonts/FreeMonoBold12pt7b.h>
-#include <Fonts/FreeMonoBold9pt7b.h>
-#include <Fonts/FreeSansBold24pt7b.h>
-#include <GxEPD2_BW.h>
-#include "GxEPD2_display_selection_new_style.h"
-#include "GxEPD2_selection_check.h"
+
 
 // Enable GxEPD2 GFX compatibility (0 = disable, 1 = enable)
 //#define ENABLE_GxEPD2_GFX 1

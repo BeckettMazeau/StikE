@@ -1,4 +1,3 @@
-#include <Arduino.h>
 #include "GxEPD2_Example.h"
 // Example function from GxEPD2_Example.cpp
 
