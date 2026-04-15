@@ -1,7 +1,7 @@
 #include <Arduino.h>
 #include "epd_test.h"
-// put function declarations here:
-int myFunction(int, int);
+#include "GxEPD2_Example.h"
+// Example function from GxEPD2_Example.cpp
 
 void setup() {
   Serial.begin(115200);
@@ -18,7 +18,11 @@ void setup() {
 }
 
 void loop() {
-  // put your main code here, to run repeatedly:
+  // Run the e-paper display example
+  example();
+  
+  // Example completes in endless loop within itself - 
+  // normally you would call it once per update cycle
 }
 
 // put function definitions here:

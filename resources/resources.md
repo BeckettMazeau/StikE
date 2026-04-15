@@ -1,3 +1,14 @@
+# Chosen Pins
+
+### ePaper Display Pins
+- CS: 22
+- DC: 23
+- RST: 24
+- BUSY: 25
+
+
+
+
 # Header File Notes
 In prog1.h:
 ```cpp
