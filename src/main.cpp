@@ -4,7 +4,7 @@
 void setup() {
   Serial.begin(115200);
   delay(1000);  // Short delay to ensure serial is ready
-
+  Serial.println("Hello, e-paper display!");
   if (psramInit()) {
     Serial.println("PSRAM is enabled!");
     Serial.printf("PSRAM size: %u bytes\n", ESP.getPsramSize());

@@ -2,6 +2,7 @@
 #define _GxEPD2_Example_H_
 
 #include <Arduino.h>
+#include <GxEPD2_GFX.h>
 
 
 // Enable GxEPD2 GFX compatibility (0 = disable, 1 = enable)
