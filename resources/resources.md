@@ -1,13 +1,24 @@
 # Chosen Pins
 
 ### ePaper Display Pins
-- CS/SS: 4
-- DC: 5
-- RST: 6
-- BUSY: 8
-- SCK: 17
-- MISO: NC
-- MOSI: 21
+    - CS/SS: 4
+    - DC: 5
+    - RST: 6
+    - BUSY: 8
+    - SCK: 17
+    - MISO: NC
+    - MOSI: 21
+### TFT Display Pins
+    - SCLK: 13
+    - MOSI: 11
+    - MISO: 12
+    - CS: 10
+    - DC: 9
+    - RESET: 14
+    - BACKLIGHT: 8
+### Keyboard Pins
+    - SDA: 1
+    - SCL: 2
 
 
 
