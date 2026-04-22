@@ -1,77 +1,314 @@
-#include <TFT_eSPI.h>
+#include <Arduino.h>
+#include <esp_sleep.h>
+#include <esp_log.h>
+#include <Preferences.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#include <freertos/queue.h>
 
-TFT_eSPI tft = TFT_eSPI();
+#include "pins.h"
+#include "state_types.h"
+#include "display_mgr.h"
+#include "keyboard_mgr.h"
 
-#define BTN_X_UP    4
-#define BTN_X_DOWN  5
-#define BTN_Y_UP    6
-#define BTN_Y_DOWN  7
-#define BTN_STEP    15
+DisplayManager displayMgr;
+KeyboardManager keyboardMgr;
 
-#define PANEL_W 76
-#define PANEL_H 284
-#define CTRL_W  240
-#define CTRL_H  320
+// Event queue for system events
+QueueHandle_t systemEventQueue = nullptr;
 
-int offsetX = 82;
-int offsetY = 18;
-int stepSize = 1;
-const int steps[] = {1, 5, 10};
-int stepIndex = 0;
+SystemState currentState = SystemState::STATE_ACTIVE;
+TaskItem tasks[MAX_TASKS];
+uint32_t taskCount = 0;
+int selectedTaskIndex = -1;
 
-void fillRegion(int x0, int y0, int w, int h, uint16_t color) {
-  tft.startWrite();
-  tft.setAddrWindow(x0, y0, w, h);
-  tft.pushBlock(color, (uint32_t)w * h);
-  tft.endWrite();
+uint32_t sleepCycleCount = 0;
+int currentEpaperView = 0;
+
+// Volatile flag for wake-up from light sleep
+volatile bool wakeRequested = false;
+
+// Preferences for NVS storage
+Preferences prefs;
+
+// Sleep-safe logging macros
+#define LOG_PRINT(...)   do { if (Serial) Serial.print(__VA_ARGS__); } while(0)
+#define LOG_PRINTLN(...) do { if (Serial) Serial.println(__VA_ARGS__); } while(0)
+
+void IRAM_ATTR wakeButtonISR() {
+    wakeRequested = true;
 }
 
-void applyOffsets() {
-  // Force TFT_eSPI's offsets to 0 so setAddrWindow uses raw controller coords
-  tft.setRotation(0);
+// Send system event to queue
+void sendSystemEvent(SystemEventType type, int param = 0) {
+    if (systemEventQueue) {
+        SystemEvent event = {type, param};
+        xQueueSendFromISR(systemEventQueue, &event, nullptr);
+    }
+}
 
-  // Override the library's internal offsets — these are protected, so we
-  // address the controller directly via the full 240x320 space
-  
-  // Step 1: fill ENTIRE controller framebuffer white
-  fillRegion(0, 0, CTRL_W, CTRL_H, TFT_WHITE);
+// Keyboard reader task - runs on core 0
+void keyboardTask(void* parameter) {
+    for (;;) {
+        if (keyboardMgr.isAvailable()) {
+            char key = keyboardMgr.getKeyPress();
+            if (key != 0) {
+                // Convert key to system event
+                switch (key) {
+                    case 0x1B: // ESC
+                        sendSystemEvent(SystemEventType::SLEEP_REQ);
+                        break;
+                    case 'n':
+                    case 'N':
+                        sendSystemEvent(SystemEventType::TASK_ADDED);
+                        break;
+                    case 'j':
+                    case 'J':
+                    case 0x34: // Down arrow
+                        sendSystemEvent(SystemEventType::KEY_PRESS, 'j');
+                        break;
+                    case 'k':
+                    case 'K':
+                    case 0x35: // Up arrow
+                        sendSystemEvent(SystemEventType::KEY_PRESS, 'k');
+                        break;
+                    case 'x':
+                    case 'X':
+                        sendSystemEvent(SystemEventType::TASK_TOGGLED, selectedTaskIndex);
+                        break;
+                    default:
+                        // Ignore other keys
+                        break;
+                }
+            }
+        }
+        vTaskDelay(pdMS_TO_TICKS(10)); // 10ms polling interval
+    }
+}
 
-  // Step 2: fill the panel window black
-  fillRegion(offsetX, offsetY, PANEL_W, PANEL_H, TFT_BLACK);
+// Save tasks to NVS
+void saveTasks() {
+    prefs.begin("stike", false);
+    prefs.putUInt("taskCount", taskCount);
+    
+    for (uint32_t i = 0; i < taskCount && i < MAX_TASKS; ++i) {
+        char key[16];
+        snprintf(key, sizeof(key), "task_%lu_title", i);
+        prefs.putString(key, tasks[i].title);
+        
+        snprintf(key, sizeof(key), "task_%lu_completed", i);
+        prefs.putBool(key, tasks[i].isCompleted);
+        
+        snprintf(key, sizeof(key), "task_%lu_timestamp", i);
+        prefs.putUInt(key, tasks[i].timestamp);
+    }
+    
+    prefs.end();
+    LOG_PRINTLN("[NVS] Tasks saved");
+}
 
-  Serial.printf("OffsetX: %d  OffsetY: %d  Step: %d\n", offsetX, offsetY, stepSize);
+// Load tasks from NVS
+void loadTasks() {
+    prefs.begin("stike", true);
+    taskCount = prefs.getUInt("taskCount", 0);
+    if (taskCount > MAX_TASKS) taskCount = MAX_TASKS;
+    
+    for (uint32_t i = 0; i < taskCount; ++i) {
+        char key[16];
+        snprintf(key, sizeof(key), "task_%lu_title", i);
+        String titleStr = prefs.getString(key, "");
+        strncpy(tasks[i].title, titleStr.c_str(), 31);
+        tasks[i].title[31] = '\0';
+        
+        snprintf(key, sizeof(key), "task_%lu_completed", i);
+        tasks[i].isCompleted = prefs.getBool(key, false);
+        
+        snprintf(key, sizeof(key), "task_%lu_timestamp", i);
+        tasks[i].timestamp = prefs.getUInt(key, 0);
+    }
+    
+    prefs.end();
+    LOG_PRINTF("[NVS] Loaded %u tasks\n", taskCount);
+}
+
+// Add demo tasks (used when no saved tasks exist)
+void addDemoTasks() {
+    tasks[0] = TaskItem("Review PR #42", false, 0);
+    tasks[1] = TaskItem("Update docs", true, 0);
+    tasks[2] = TaskItem("Fix bug in display", false, 0);
+    tasks[3] = TaskItem("Team standup", true, 0);
+    taskCount = 4;
+}
+
+void enterSleepMode() {
+    LOG_PRINTLN("[State] Entering SLEEP mode");
+
+    displayMgr.turnOffTFT();
+    displayMgr.prepareEpaperViews(tasks, taskCount);
+
+    sleepCycleCount = 0;
+    currentEpaperView = 0;
+    currentState = SystemState::STATE_SLEEP;
+    
+    // Save tasks before sleeping
+    saveTasks();
+}
+
+void wakeToActive() {
+    LOG_PRINTLN("[State] Waking to ACTIVE mode");
+
+    displayMgr.turnOnTFT();
+    currentState = SystemState::STATE_ACTIVE;
+    selectedTaskIndex = -1;
+}
+
+void handleActiveState() {
+    // Process events from queue
+    SystemEvent event;
+    while (xQueueReceive(systemEventQueue, &event, 0) == pdTRUE) {
+        switch (event.type) {
+            case SystemEventType::SLEEP_REQ:
+                LOG_PRINTLN("[Input] ESC pressed - entering sleep");
+                enterSleepMode();
+                return;
+                
+            case SystemEventType::TASK_ADDED:
+                if (taskCount < MAX_TASKS) {
+                    char newTitle[32];
+                    snprintf(newTitle, sizeof(newTitle), "New Task %lu", taskCount + 1);
+                    tasks[taskCount] = TaskItem(newTitle, false, millis());
+                    taskCount++;
+                    LOG_PRINTF("[Input] Added task %lu\n", taskCount);
+                    saveTasks();  // Save immediately when task is added
+                }
+                break;
+                
+            case SystemEventType::KEY_PRESS:
+                switch (event.param) {
+                    case 'j': // Down arrow
+                    case 0x34:
+                        if (selectedTaskIndex < static_cast<int>(taskCount) - 1) {
+                            selectedTaskIndex++;
+                        }
+                        break;
+                        
+                    case 'k': // Up arrow
+                    case 0x35:
+                        if (selectedTaskIndex > 0) {
+                            selectedTaskIndex--;
+                        }
+                        break;
+                        
+                    default:
+                        break;
+                }
+                break;
+                
+            case SystemEventType::TASK_TOGGLED:
+                if (event.param >= 0 && event.param < static_cast<int>(taskCount)) {
+                    tasks[event.param].isCompleted = !tasks[event.param].isCompleted;
+                    LOG_PRINTF("[Input] Toggled task %d\n", event.param);
+                    saveTasks();  // Save immediately when task is toggled
+                }
+                break;
+                
+            default:
+                break;
+        }
+    }
+
+    // Draw GUI
+    displayMgr.drawActiveGUI(tasks, taskCount, selectedTaskIndex);
+}
+
+void handleSleepState() {
+    LOG_PRINTF("[Sleep] Cycle %u, view %d\n", sleepCycleCount, currentEpaperView);
+
+    displayMgr.updateEpaperPartial(currentEpaperView);
+    currentEpaperView = (currentEpaperView + 1) % EPAPER_VIEW_COUNT;
+    sleepCycleCount++;
+
+    // Configure wake-up sources
+    esp_sleep_enable_timer_wakeup(SLEEP_DURATION_US);
+    esp_sleep_enable_gpio_wakeup();
+
+    // Clear wake flag before sleeping
+    wakeRequested = false;
+
+    // Power down VDDSDIO domain to reduce power consumption during sleep
+    esp_sleep_pd_config(ESP_PD_DOMAIN_VDDSDIO, ESP_PD_OPTION_OFF);
+
+    // Enter light sleep
+    esp_light_sleep_start();
+
+    // Check wake reason immediately after waking
+    if (wakeRequested) {
+        LOG_PRINTLN("[Sleep] Woke from GPIO interrupt");
+        wakeToActive();
+    }
 }
 
 void setup() {
-  Serial.begin(115200);
-  pinMode(BTN_X_UP,   INPUT_PULLUP);
-  pinMode(BTN_X_DOWN, INPUT_PULLUP);
-  pinMode(BTN_Y_UP,   INPUT_PULLUP);
-  pinMode(BTN_Y_DOWN, INPUT_PULLUP);
-  pinMode(BTN_STEP,   INPUT_PULLUP);
-  
-  tft.init();
-  applyOffsets();
+    Serial.begin(115200);
+    delay(500);
+    LOG_PRINTLN("\n=== StikE Firmware Starting ===");
+
+    displayMgr.initTFT();
+    displayMgr.initEpaper();
+    keyboardMgr.init();
+
+    pinMode(Pins::WAKE_BTN, INPUT_PULLUP);
+    attachInterrupt(Pins::WAKE_BTN, wakeButtonISR, FALLING);
+    esp_sleep_enable_gpio_wakeup();
+
+    // Create system event queue
+    systemEventQueue = xQueueCreate(10, sizeof(SystemEvent));
+    if (systemEventQueue == nullptr) {
+        LOG_PRINTLN("[ERROR] Failed to create system event queue");
+    }
+
+    // Create keyboard task on core 0
+    BaseType_t result = xTaskCreatePinnedToCore(
+        keyboardTask,
+        "KeyboardTask",
+        2048,  // Stack size
+        nullptr,
+        1,     // Priority
+        nullptr,
+        0      // Core 0
+    );
+    
+    if (result != pdPASS) {
+        LOG_PRINTLN("[ERROR] Failed to create keyboard task");
+    }
+
+    // Load tasks from NVS
+    loadTasks();
+    if (taskCount == 0) {
+        addDemoTasks();
+        LOG_PRINTLN("[Setup] No saved tasks found, using demo tasks");
+    }
+    LOG_PRINTF("[Setup] Loaded %u tasks\n", taskCount);
+
+    LOG_PRINTLN("[Setup] Entering ACTIVE state");
+    currentState = SystemState::STATE_ACTIVE;
 }
 
 void loop() {
-  bool changed = false;
+    switch (currentState) {
+        case SystemState::STATE_ACTIVE:
+            handleActiveState();
+            break;
 
-  if (digitalRead(BTN_STEP) == LOW) {
-    stepIndex = (stepIndex + 1) % 3;
-    stepSize = steps[stepIndex];
-    Serial.printf("Step size: %d\n", stepSize);
-    delay(300);
-    return;
-  }
+        case SystemState::STATE_SLEEP:
+            handleSleepState();
+            break;
 
-  if (digitalRead(BTN_X_UP) == LOW)   { offsetX += stepSize; changed = true; }
-  if (digitalRead(BTN_X_DOWN) == LOW) { offsetX -= stepSize; changed = true; }
-  if (digitalRead(BTN_Y_UP) == LOW)   { offsetY += stepSize; changed = true; }
-  if (digitalRead(BTN_Y_DOWN) == LOW) { offsetY -= stepSize; changed = true; }
+        default:
+            LOG_PRINTLN("[Error] Unknown state, resetting to ACTIVE");
+            currentState = SystemState::STATE_ACTIVE;
+            break;
+    }
 
-  if (changed) {
-    applyOffsets();
-    delay(120);
-  }
+    delay(50);
 }
