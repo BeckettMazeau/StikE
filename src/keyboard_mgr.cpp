@@ -10,7 +10,7 @@ void KeyboardManager::init() {
     Wire.begin(Pins::KEY_SDA, Pins::KEY_SCL);
     Wire.setClock(100000);
     initialized = true;
-    Serial.println("[KeyboardMgr] I2C initialized on SDA=1, SCL=2");
+    Serial.printf("[KeyboardMgr] I2C initialized on SDA=%d, SCL=%d\n", Pins::KEY_SDA, Pins::KEY_SCL);
 }
 
 bool KeyboardManager::isAvailable() {
@@ -22,17 +22,44 @@ char KeyboardManager::getKeyPress() {
         return 0;
     }
 
-    Wire.requestFrom(I2C_ADDR, static_cast<uint8_t>(1));
-    if (Wire.available()) {
+    // --- LOG SPAM BACKOFF START ---
+    static unsigned long lastFailTime = 0;
+    if (millis() - lastFailTime < 1000) {
+        return 0; 
+    }
+    // --- LOG SPAM BACKOFF END ---
+
+    // Capture return value: 0 indicates hardware failure/timeout
+    uint8_t bytesRead = Wire.requestFrom((uint16_t)I2C_ADDR, (uint8_t)1);
+    
+    if (bytesRead > 0 && Wire.available()) {
         char c = Wire.read();
         if (c != 0 && c != lastKey) {
             lastKey = c;
             return c;
         }
+    } else {
+        // Read failed: set backoff timer to silence ESP-IDF error spam
+        lastFailTime = millis();
     }
 
-    // No valid key pressed - reset lastKey to allow repeating characters
     lastKey = 0;
     delay(10);
     return 0;
+}
+
+void KeyboardManager::scanBus() {
+    Serial.println("[KeyboardMgr] Starting I2C bus scan...");
+    int nDevices = 0;
+    for (byte address = 1; address < 127; address++) {
+        Wire.beginTransmission(address);
+        byte error = Wire.endTransmission();
+
+        if (error == 0) {
+            Serial.printf("[KeyboardMgr] Device found at address 0x%02X\n", address);
+            nDevices++;
+        }
+    }
+    if (nDevices == 0) Serial.println("[KeyboardMgr] No I2C devices found.");
+    else Serial.printf("[KeyboardMgr] Scan complete. Found %d device(s).\n", nDevices);
 }

@@ -7,6 +7,9 @@
 
 #ifdef STike_SYSTEM_TEST
 
+extern DisplayManager displayMgr;
+extern KeyboardManager keyboardMgr;
+
 bool SystemsTest::s_testMode = true;
 
 SystemsTest::SystemsTest()
@@ -115,6 +118,9 @@ void SystemsTest::handleSerialInput() {
             Serial.println("\n=== EXITING TEST MODE ===");
             s_testMode = false;
             break;
+        case 'i':
+            keyboardMgr.scanBus();
+            break;
         default:
             Serial.printf("[TEST] Unknown command: %c\n", cmd);
             Serial.println("Type 'help' for available commands");
@@ -126,69 +132,66 @@ void SystemsTest::handleSerialInput() {
 
 void SystemsTest::handleKeyPress(char key) {
     if (key == 0) return;
-+
-+    // Log and remember the key
-+    Serial.printf("[TEST] Key Pressed: %c (0x%02X)\n", (key >= 32 && key <= 126) ? key : '?', key);
-+    logKeyPress(key);
-+    m_lastKey = key;
-+
-+    // Update rolling history of last 10 keys
-+    for (int i = 8; i >= 0; --i) m_keyHistory[i+1] = m_keyHistory[i];
-+    m_keyHistory[0] = (key >= 32 && key <= 126) ? key : '?';
-+    m_historyCount = (m_historyCount < 10) ? m_historyCount + 1 : 10;
-+
-+    // TFT visual feedback: random background, large key display
-+    extern DisplayManager displayMgr;
-+    uint16_t color = random(0x0000, 0xFFFF);
-+    TFT_eSPI& tft = displayMgr.getTFT();
-+    tft.fillScreen(color);
-+    tft.setTextColor(TFT_WHITE);
-+    tft.setTextSize(5);
-+    tft.setCursor(20, 50);
-+    if (key >= 32 && key <= 126) {
-+        tft.printf("%c", key);
-+    } else {
-+        tft.printf("0x%02X", (uint8_t)key);
-+    }
-+
-+    // ePaper partial refresh showing history string
-+    extern DisplayManager displayMgr;
-+    // Build history string
-+    char historyStr[12] = {0}; // max 10 chars + null
-+    for (int i = 0; i < m_historyCount; ++i) {
-+        historyStr[i] = m_keyHistory[i];
-+    }
-+    // Use partial window (fixed size) to avoid full refresh
-+    displayMgr.getEPD().setPartialWindow(0, 0, 200, 50);
-+    displayMgr.getEPD().firstPage();
-+    do {
-+        displayMgr.getEPD().fillScreen(GxEPD_WHITE);
-+        displayMgr.getEPD().setTextColor(GxEPD_BLACK);
-+        displayMgr.getEPD().setCursor(5, 20);
-+        displayMgr.getEPD().print("History: ");
-+        displayMgr.getEPD().print(historyStr);
-+    } while (displayMgr.getEPD().nextPage());
-+
-+    // ESC key triggers light sleep test
-+    if (key == 0x1B) {
-+        Serial.println("[TEST] ESC pressed – entering light sleep (5s)");
-+        tft.fillScreen(TFT_RED);
-+        tft.setTextColor(TFT_WHITE);
-+        tft.setCursor(10, 50);
-+        tft.print("SLEEPING...");
-+        delay(100);
-+        esp_sleep_enable_timer_wakeup(5000000ULL);
-+        esp_light_sleep_start();
-+        Serial.println("[TEST] Wakeup from light sleep");
-+        tft.fillScreen(TFT_GREEN);
-+        tft.setCursor(10, 50);
-+        tft.print("AWAKE!");
-+    }
-+
-+    // Update on-screen key display (existing routine) for consistency
-+    drawKeyDisplay(key);
-+}
 
+    // Log and remember the key
+    Serial.printf("[TEST] Key Pressed: %c (0x%02X)\n", (key >= 32 && key <= 126) ? key : '?', key);
+    logKeyPress(key);
+    m_lastKey = key;
+
+    // Update rolling history of last 10 keys
+    for (int i = 8; i >= 0; --i) m_keyHistory[i+1] = m_keyHistory[i];
+    m_keyHistory[0] = (key >= 32 && key <= 126) ? key : '?';
+    m_historyCount = (m_historyCount < 10) ? m_historyCount + 1 : 10;
+
+    // TFT visual feedback: random background, large key display
+    uint16_t color = random(0x0000, 0xFFFF);
+    TFT_eSPI& tft = displayMgr.getTFT();
+    tft.fillScreen(color);
+    tft.setTextColor(TFT_WHITE);
+    tft.setTextSize(5);
+    tft.setCursor(20, 50);
+    if (key >= 32 && key <= 126) {
+        tft.printf("%c", key);
+    } else {
+        tft.printf("0x%02X", (uint8_t)key);
+    }
+
+    // ePaper partial refresh showing history string
+    // Build history string
+    char historyStr[12] = {0}; // max 10 chars + null
+    for (int i = 0; i < m_historyCount; ++i) {
+        historyStr[i] = m_keyHistory[i];
+    }
+    // Use partial window (fixed size) to avoid full refresh
+    displayMgr.getEPD().setPartialWindow(0, 0, 200, 50);
+    displayMgr.getEPD().firstPage();
+    do {
+        displayMgr.getEPD().fillScreen(GxEPD_WHITE);
+        displayMgr.getEPD().setTextColor(GxEPD_BLACK);
+        displayMgr.getEPD().setCursor(5, 20);
+        displayMgr.getEPD().print("History: ");
+        displayMgr.getEPD().print(historyStr);
+    } while (displayMgr.getEPD().nextPage());
+
+    // ESC key triggers light sleep test
+    if (key == 0x1B) {
+        Serial.println("[TEST] ESC pressed – entering light sleep (5s)");
+        tft.fillScreen(TFT_RED);
+        tft.setTextColor(TFT_WHITE);
+        tft.setCursor(10, 50);
+        tft.print("SLEEPING...");
+        delay(100);
+        esp_sleep_enable_timer_wakeup(5000000ULL);
+        esp_light_sleep_start();
+        Serial.println("[TEST] Wakeup from light sleep");
+        tft.fillScreen(TFT_GREEN);
+        tft.setCursor(10, 50);
+        tft.print("AWAKE!");
+    }
+
+    // Update on-screen key display (existing routine) for consistency
+    drawKeyDisplay(key);
+}
 
 void SystemsTest::drawTFTTestPattern() {
     TFT_eSPI& tft = displayMgr.getTFT();
@@ -248,7 +251,7 @@ void SystemsTest::drawKeyDisplay(char key) {
         return;
     }
     
-    uint8_t color = getKeyColor(key);
+    uint16_t color = getKeyColor(key);
     const char* name = getKeyName(key);
     
     tft.fillRect(2, 25, tft.width() - 4, 40, color);
@@ -314,6 +317,7 @@ void SystemsTest::showHelp() {
     Serial.println("  k - Keyboard test");
     Serial.println("  r - Reset to normal");
     Serial.println("  c - Clear key history");
+    Serial.println("  i - Run I2C Bus Scanner");
     Serial.println("  status - Show system status");
     Serial.println("  ?/h - Show this help");
     Serial.println("  q - Exit test mode");
@@ -347,10 +351,10 @@ const char* SystemsTest::getKeyName(char key) {
         case 'e': return "EPAPER TEST";
         case 's': return "SLEEP";
         case '?': return "HELP";
-        case 0x34: return "DOWN ARROW";
-        case 0x35: return "UP ARROW";
-        case 0x33: return "LEFT ARROW";
-        case 0x36: return "RIGHT ARROW";
+        case 0xB4: return "LEFT ARROW";
+        case 0xB5: return "UP ARROW";
+        case 0xB6: return "DOWN ARROW";
+        case 0xB7: return "RIGHT ARROW";
         default:
             if (key >= 'a' && key <= 'z') return "LETTER";
             if (key >= 'A' && key <= 'Z') return "LETTER";
@@ -359,7 +363,7 @@ const char* SystemsTest::getKeyName(char key) {
     }
 }
 
-uint8_t SystemsTest::getKeyColor(char key) {
+uint16_t SystemsTest::getKeyColor(char key) {
     switch (key) {
         case 0x1B: return TFT_RED;
         case 'n': case 'N': return TFT_GREEN;

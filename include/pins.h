@@ -22,8 +22,9 @@ constexpr uint8_t LCD_DC    = 9;
 constexpr uint8_t LCD_RST   = 14;
 constexpr uint8_t LCD_BL    = 42;  // Reassigned from GPIO 8 to avoid conflict with EP_BUSY
 
-constexpr uint8_t KEY_SDA = 1;
-constexpr uint8_t KEY_SCL = 2;
+// Migrated to new pins to support logic level shifter and avoid damaged/occupied GPIOs
+constexpr uint8_t KEY_SDA = 18;
+constexpr uint8_t KEY_SCL = 16;
 
 constexpr uint8_t WAKE_BTN = 15;
 

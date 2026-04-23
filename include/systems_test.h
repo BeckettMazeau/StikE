@@ -45,7 +45,7 @@ private:
     };
     
     const char* getKeyName(char key);
-    uint8_t getKeyColor(char key);
+    uint16_t getKeyColor(char key);
 };
 
 #endif // STike_SYSTEM_TEST

@@ -3,6 +3,8 @@
 #include "display_mgr.h"
 #include "state_types.h"
 
+constexpr int MISO_DUMMY = 35;
+
 // Dedicated HSPI bus for ePaper (separate from TFT's VSPI)
 SPIClass epd_spi(HSPI);
 
@@ -28,42 +30,54 @@ DisplayManager::~DisplayManager() {
 }
 
 void DisplayManager::initTFT() {
-    Serial.println("[DisplayMgr] initTFT: about to call tft.init()");
+    Serial.println("[DisplayMgr] initTFT: Starting TFT_eSPI initialization");
     
-    // Removed manual SPI.begin(); TFT_eSPI will handle bus init
-    Serial.println("[DisplayMgr] Skipping manual SPI.begin()");
-    
+    // Let TFT_eSPI handle the SPI bus initialization entirely via User_Setup.h
     tft.init();
-    Serial.println("[DisplayMgr] tft.init() returned");
     tft.setRotation(1);
     tftOn = true;
+
+    // --- HARDWARE PROOF START ---
+    tft.fillScreen(TFT_RED);
+    delay(500);
+    tft.fillScreen(TFT_GREEN);
+    delay(500);
+    tft.fillScreen(TFT_BLACK);
+    // --- HARDWARE PROOF END ---
     
-    // Initialize GUI sprite in PSRAM (128x160x16bpp = 40KB)
     Serial.println("[DisplayMgr] Creating sprite...");
     guiSprite = new TFT_eSprite(&tft);
-    if (guiSprite && guiSprite->createSprite(tft.width(), tft.height())) {
-        guiSprite->setColorDepth(16);
-        guiSprite->setSwapBytes(true);
-        Serial.println("[DisplayMgr] GUI sprite allocated in PSRAM");
-    } else {
-        Serial.println("[DisplayMgr] ERROR: Failed to allocate GUI sprite in PSRAM");
-        // Fallback to direct drawing if sprite creation fails
-        delete guiSprite;
-        guiSprite = nullptr;
-    }
     
-    tft.fillScreen(TFT_BLACK);
+    if (guiSprite) {
+        guiSprite->setColorDepth(16); 
+        if (guiSprite->createSprite(tft.width(), tft.height())) {
+            guiSprite->setSwapBytes(true);
+            Serial.println("[DisplayMgr] GUI sprite allocated successfully");
+        } else {
+            Serial.println("[DisplayMgr] ERROR: Failed to allocate GUI sprite");
+            delete guiSprite;
+            guiSprite = nullptr;
+        }
+    }
     Serial.println("[DisplayMgr] TFT initialized");
 }
 
 void DisplayManager::initEpaper() {
-    // Initialize HSPI for ePaper on custom pins
-    epd_spi.begin(Pins::EP_SCK, -1, Pins::EP_MOSI, -1);
+    // Initialize HSPI for ePaper using the safe dummy pin and -1 for CS
+    epd_spi.begin(Pins::EP_SCK, MISO_DUMMY, Pins::EP_MOSI, -1);
 
-    // Bind ePaper to HSPI bus with full SPI settings
-    epd.init(115200, true, 10, false, epd_spi, epd_spi_settings);
+    // Bind ePaper to HSPI bus with a 20ms reset to ensure wake from deep sleep
+    epd.init(115200, true, 20, false, epd_spi, epd_spi_settings);
     epd.setRotation(1);
+
+    // --- HARDWARE PROOF START ---
+    epd.setFullWindow();
+    epd.fillScreen(GxEPD_BLACK);
+    epd.display();
     epd.fillScreen(GxEPD_WHITE);
+    epd.display();
+    // --- HARDWARE PROOF END ---
+
     epd.powerOff();  // Power down completely to save energy
     Serial.println("[DisplayMgr] ePaper initialized on HSPI");
 }
@@ -118,11 +132,7 @@ void DisplayManager::drawEpaperView(int index) {
 }
 
 void DisplayManager::updateEpaperPartial(int viewIndex) {
-    // Re-initialize HSPI and bind ePaper
-    epd_spi.begin(Pins::EP_SCK, -1, Pins::EP_MOSI, -1);
-    epd.init(115200, true, 10, false, epd_spi, epd_spi_settings);
-    delay(20);
-
+    // Do not re-initialize the SPI bus here. Let the ePaper library manage bus state.
     drawEpaperView(viewIndex);
 }
 

@@ -63,6 +63,15 @@ void sendSystemEvent(SystemEventType type, int param = 0) {
 // Keyboard reader task - runs on core 0
 void keyboardTask(void* parameter) {
     for (;;) {
+        // --- CONCURRENCY FIX START ---
+        #ifdef STike_SYSTEM_TEST
+        if (SystemsTest::isTestMode()) {
+            vTaskDelay(pdMS_TO_TICKS(100)); // Yield Core 0 while Test Mode handles I2C
+            continue;
+        }
+        #endif
+        // --- CONCURRENCY FIX END ---
+
         if (keyboardMgr.isAvailable()) {
             char key = keyboardMgr.getKeyPress();
             if (key != 0) {
