@@ -13,42 +13,41 @@ The system alternates between ACTIVE mode (interactive TFT) and SLEEP mode (ePap
 
 ## Pin Configuration
 
-### ePaper Display (SPI - HSPI Bus)
+### ePaper Display (Software SPI - bit-banged)
 | Signal | GPIO | Notes |
 |--------|------|-------|
-| CS/SS | 4 | SPI chip select |
-| DC | 5 | Data/Command pin |
-| RST | 6 | Reset pin |
-| BUSY | 8 | Busy status (dedicated pin) |
-| SCK | 17 | SPI clock (HSPI) |
-| MOSI | 21 | SPI data out (HSPI) |
-| MISO | NC | Not connected |
+| CS/SS | 7 | Chip select |
+| DC | 16 | Data/Command pin |
+| RST | 15 | Reset pin |
+| BUSY | 4 | Busy status (dedicated pin) |
 
-### TFT Display (SPI - VSPI Bus)
+### TFT Display (SPI - VSPI hardware bus)
 | Signal | GPIO | Notes |
 |--------|------|-------|
-| SCLK | 12 | SPI clock (VSPI) |
-| MOSI | 11 | SPI data out (VSPI) |
-| MISO | NC | Not connected (readback not used) |
-| CS | 10 | SPI chip select |
+| SCLK | 12 | VSPI clock |
+| MOSI | 11 | VSPI data out |
+| MISO | NC | Not connected |
+| CS | 10 | Chip select |
 | DC | 9 | Data/Command pin |
-| RESET | 14 | Hardware reset |
-| BACKLIGHT | 42 | Backlight enable (dedicated pin, no longer shared) |
+| RESET | 13 | Hardware reset |
+| BACKLIGHT | 42 | Backlight enable |
 
 ### Keyboard (I2C)
 | Signal | GPIO | Notes |
 |--------|------|-------|
 | SDA | 18 | I2C data |
-| SCL | 16 | I2C clock |
+| SCL | 21 | I2C clock (moved from 16 to avoid ePaper DC conflict) |
 
 ### Wake Button
 | Signal | GPIO | Notes |
 |--------|------|-------|
-| WAKE_BTN | 15 | Physical button to wake from sleep (RTC GPIO) |
+| WAKE_BTN | 14 | Physical button to wake from sleep (moved from 15 to avoid ePaper RST conflict) |
 
-### Dedicated Pin Configuration (Resolved GPIO Conflict)
-GPIO 8 is now dedicated exclusively to ePaper BUSY monitoring.
-The TFT backlight is controlled via GPIO 42, eliminating pin sharing.
+### Pin Configuration Notes
+- TFT uses VSPI hardware bus (SCK=12, MOSI=11)
+- ePaper uses Software SPI (bit-banged, no HW SPI pins needed)
+- Each display has independent pins - no shared SPI bus
+- LCD_BL on GPIO 42 is dedicated to TFT backlight control
 
 ---
 
@@ -143,20 +142,18 @@ private:
 
 ## Architecture Notes
 
-### Dual SPI Bus Architecture
-The TFT and ePaper use **separate SPI buses** to avoid bus collisions:
-- **TFT**: Uses default VSPI (TFT_eSPI default) on pins 11/12/13
-- **ePaper**: Uses dedicated HSPI on custom pins 17/21 with custom SPIClass
+### Dual Display Architecture
+The TFT and ePaper use **independent SPI configurations**:
+- **TFT**: Uses VSPI hardware bus (SCK=12, MOSI=11) via TFT_eSPI
+- **ePaper**: Uses Software SPI (bit-banged) via GxEPD2
 
 ```cpp
 // display_mgr.cpp
-SPIClass epd_spi(HSPI);                    // Dedicated HSPI for ePaper
-SPISettings epd_spi_settings(2000000, MSBFIRST, SPI_MODE0);
-GxEPD2_213_B74 epd_instance(Pins::EP_CS, Pins::EP_DC, Pins::EP_RST, Pins::EP_BUSY);
+GxEPD2_213_B74 epd_instance(7, 16, 15, 4);  // CS=7, DC=16, RST=15, BUSY=4
 GxEPD2_BW<GxEPD2_213_B74, GxEPD2_213_B74::HEIGHT> epd(epd_instance);
 
-// Initialization binds ePaper to HSPI
-epd.init(115200, true, 10, false, epd_spi, epd_spi_settings);
+// Initialization - ePaper uses Software SPI (no HW SPI needed)
+epd.init(115200, true, 20, false);
 ```
 
 ### Sleep/Wake Architecture
@@ -227,11 +224,11 @@ if (wakeRequested) {
 ### STATE_SLEEP Behavior
 
 - TFT backlight turned off (ST7735_SLPIN command + GPIO LOW)
-- GPIO 8 reconfigured for ePaper BUSY monitoring
+- GPIO 14 configured for wake button (physical button to wake from sleep)
 - ePaper cycles through up to 5 task views (EPAPER_VIEW_COUNT)
 - Each view displays: Task number, title, completion status
 - Timer wakeup every 10 seconds cycles to next view
-- GPIO wakeup (button on GPIO 15) returns to ACTIVE mode
+- GPIO wakeup returns to ACTIVE mode
 
 ---
 
@@ -241,14 +238,14 @@ if (wakeRequested) {
 
 | Component | Status | Notes |
 |------------|--------|-------|
-| platformio.ini | Done | ESP32-S3, TFT_eSPI (VSPI), GxEPD2 (HSPI) configured; removed USE_HSPI_PORT flag |
-| Pin definitions | Done | All GPIOs defined, WAKE_BTN=15, LCD_BL moved to GPIO 42 to resolve conflict |
+| platformio.ini | Done | ESP32-S3, TFT on VSPI hardware, ePaper on Software SPI; uses custom board config |
+| Pin definitions | Done | All GPIOs defined, separate bus architecture resolved (TFT: VSPI, ePaper: SoftSPI) |
 | State types | Done | SystemState, TaskItem with fixed-size char buffer (no heap fragmentation) |
-| DisplayManager class | Done | PSRAM-allocated sprite for flicker-free GUI, no shared pin logic |
-| KeyboardManager class | Done | I2C init, repeat key handling fixed |
+| DisplayManager class | Done | PSRAM-allocated sprite for flicker-free GUI, independent display control |
+| KeyboardManager class | Done | I2C init, repeat key handling fixed, SCL moved to GPIO 21 |
 | State machine | Done | ACTIVE/SLEEP with wake flag and event queue |
 | Task storage (NVS) | Done | Persists tasks across reboots using Preferences library |
-| Build system | Done | Compiles ~378KB flash, ~26KB RAM |
+| Build system | Done | Compiles with separate SPI architecture |
 
 ### 🔲 Stubbed / Needs Implementation
 
@@ -262,7 +259,7 @@ if (wakeRequested) {
 ### 📝 Known Issues (Resolved)
 
 1. ~~**ePaper template syntax**~~ - Fixed: Direct class member with GxEPD2_213_B74 instance
-2. ~~**Dual-SPI bus collision**~~ - Fixed: ePaper uses dedicated HSPI on custom pins
+2. ~~**Dual-SPI bus collision**~~ - Fixed: ePaper and TFT share FSPI bus with separate CS pins
 3. ~~**Infinite sleep loop**~~ - Fixed: volatile wakeRequested flag checked after light sleep
 4. ~~**Keyboard repeat characters**~~ - Fixed: lastKey reset when no valid key
 5. ~~**TFT_MISO**~~ - Fixed: Changed from -1 to 12
@@ -277,27 +274,28 @@ if (wakeRequested) {
 ```ini
 [env:esp32-s3-devkitc-1]
 platform = espressif32
-board = esp32-s3-devkitc-1
+board = esp32-s3-devkitc-1-n16r8v
 framework = arduino
 lib_deps = 
-    bodmer/TFT_eSPI@^2.5.43
-    zinggjm/GxEPD2@^1.6.8
-    adafruit/Adafruit GFX Library@^1.12.6
-    adafruit/Adafruit BusIO@^1.16.1
+	bodmer/TFT_eSPI@^2.5.43
+	zinggjm/GxEPD2@^1.6.8
+	adafruit/Adafruit GFX Library@^1.12.6
+	adafruit/Adafruit BusIO@^1.16.1
 
 build_flags =
-    ; TFT_eSPI (VSPI) - Using default VSPI (FSPI on S3) - HSPI left free for ePaper
-    -D ST7735_DRIVER=1
-    -D TFT_MISO=12
-    -D TFT_MOSI=11
-    -D TFT_SCLK=13
-    -D TFT_CS=10
-    -D TFT_DC=9
-    -D TFT_RST=14
-    -D TFT_BL=42  // Reassigned from GPIO 8 to avoid conflict with EP_BUSY
-    ; GxEPD2 (HSPI - custom pins in code)
-    -D GxEPD2_DISPLAY_CLASS=Generic_EPD
-    -D GxEPD2_DRIVER_CLASS=GxEPD2_213_B74
+	; TFT_eSPI (VSPI hardware) - SCK=12, MOSI=11, CS=10, DC=9, RST=13
+	-D USER_SETUP_LOADED=1
+	-D ST7735_DRIVER=1
+	-D TFT_MISO=-1
+	-D TFT_MOSI=11
+	-D TFT_SCLK=12
+	-D TFT_CS=10
+	-D TFT_DC=9
+	-D TFT_RST=13
+	-D TFT_BL=42
+	; GxEPD2 (Software SPI) - CS=7, DC=16, RST=15, BUSY=4
+	-D GxEPD2_DISPLAY_CLASS=Generic_EPD
+	-D GxEPD2_DRIVER_CLASS=GxEPD2_213_B74
 ```
 
 ---
@@ -1018,9 +1016,9 @@ if (key) Serial.printf("Key: %c\n", key);
 
 | Check | Fix |
 |-------|-----|
-| Is HSPI initialized? | Call `epd.init()` before each update |
+| Is SPI initialized? | Call `epd.init()` before each update |
 | Is powerOff() called? | Use `epd.powerOff()` not `hibernate()` |
-| Is BUSY pin correct? | Verify GPIO 8 in `pins.h` |
+| Is BUSY pin correct? | Verify GPIO 4 in `pins.h` |
 
 **Debug**: Check ePaper connection:
 ```cpp

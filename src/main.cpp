@@ -29,10 +29,17 @@ SystemsTest systemsTest;
 // Event queue for system events
 QueueHandle_t systemEventQueue = nullptr;
 
-SystemState currentState = SystemState::STATE_ACTIVE;
+SystemState currentState = SystemState::STATE_UI_LIST;
 TaskItem tasks[MAX_TASKS];
 uint32_t taskCount = 0;
 int selectedTaskIndex = -1;
+
+// Add-task view input buffer
+char inputBuffer[INPUT_BUFFER_SIZE];
+uint32_t inputBufferLen = 0;
+
+// Redraw only after an event mutates state
+bool uiDirty = true;
 
 uint32_t sleepCycleCount = 0;
 int currentEpaperView = 0;
@@ -75,31 +82,28 @@ void keyboardTask(void* parameter) {
         if (keyboardMgr.isAvailable()) {
             char key = keyboardMgr.getKeyPress();
             if (key != 0) {
-                // Convert key to system event
-                switch (key) {
-                    case 0x1B: // ESC
+                uint8_t k = static_cast<uint8_t>(key);
+                switch (k) {
+                    case 0xB5: // Up arrow
+                        sendSystemEvent(SystemEventType::EVENT_NAV_UP);
+                        break;
+                    case 0xB6: // Down arrow
+                        sendSystemEvent(SystemEventType::EVENT_NAV_DOWN);
+                        break;
+                    case 0x0D: // Enter
+                        sendSystemEvent(SystemEventType::EVENT_SELECT);
+                        break;
+                    case 0x08: // Backspace / Del
+                        sendSystemEvent(SystemEventType::EVENT_BACKSPACE);
+                        break;
+                    case 0x1B: // ESC — sleep in LIST, cancel in ADD (handled by state)
                         sendSystemEvent(SystemEventType::SLEEP_REQ);
                         break;
-                    case 'n':
-                    case 'N':
-                        sendSystemEvent(SystemEventType::TASK_ADDED);
-                        break;
-                    case 'j':
-                    case 'J':
-                    case 0x34: // Down arrow
-                        sendSystemEvent(SystemEventType::KEY_PRESS, 'j');
-                        break;
-                    case 'k':
-                    case 'K':
-                    case 0x35: // Up arrow
-                        sendSystemEvent(SystemEventType::KEY_PRESS, 'k');
-                        break;
-                    case 'x':
-                    case 'X':
-                        sendSystemEvent(SystemEventType::TASK_TOGGLED, selectedTaskIndex);
-                        break;
                     default:
-                        // Ignore other keys
+                        if (k >= 0x20 && k <= 0x7E) {
+                            // Printable ASCII — carries the char as param
+                            sendSystemEvent(SystemEventType::EVENT_TYPE_CHAR, k);
+                        }
                         break;
                 }
             }
@@ -180,67 +184,112 @@ void wakeToActive() {
     LOG_PRINTLN("[State] Waking to ACTIVE mode");
 
     displayMgr.turnOnTFT();
-    currentState = SystemState::STATE_ACTIVE;
-    selectedTaskIndex = -1;
+    currentState = SystemState::STATE_UI_LIST;
+    selectedTaskIndex = (taskCount > 0) ? 0 : -1;
+    inputBuffer[0] = '\0';
+    inputBufferLen = 0;
+    uiDirty = true;
 }
 
-void handleActiveState() {
-    // Process events from queue
-    SystemEvent event;
-    while (xQueueReceive(systemEventQueue, &event, 0) == pdTRUE) {
-        switch (event.type) {
-            case SystemEventType::SLEEP_REQ:
-                LOG_PRINTLN("[Input] ESC pressed - entering sleep");
-                enterSleepMode();
-                return;
-                
-            case SystemEventType::TASK_ADDED:
-                if (taskCount < MAX_TASKS) {
-                    char newTitle[32];
-                    snprintf(newTitle, sizeof(newTitle), "New Task %lu", taskCount + 1);
-                    tasks[taskCount] = TaskItem(newTitle, false, millis());
-                    taskCount++;
-                    LOG_PRINTF("[Input] Added task %lu\n", taskCount);
-                    saveTasks();  // Save immediately when task is added
-                }
-                break;
-                
-            case SystemEventType::KEY_PRESS:
-                switch (event.param) {
-                    case 'j': // Down arrow
-                    case 0x34:
-                        if (selectedTaskIndex < static_cast<int>(taskCount) - 1) {
-                            selectedTaskIndex++;
-                        }
-                        break;
-                        
-                    case 'k': // Up arrow
-                    case 0x35:
-                        if (selectedTaskIndex > 0) {
-                            selectedTaskIndex--;
-                        }
-                        break;
-                        
-                    default:
-                        break;
-                }
-                break;
-                
-            case SystemEventType::TASK_TOGGLED:
-                if (event.param >= 0 && event.param < static_cast<int>(taskCount)) {
-                    tasks[event.param].isCompleted = !tasks[event.param].isCompleted;
-                    LOG_PRINTF("[Input] Toggled task %d\n", event.param);
-                    saveTasks();  // Save immediately when task is toggled
-                }
-                break;
-                
-            default:
-                break;
-        }
-    }
+static void handleUIListEvent(const SystemEvent& event) {
+    switch (event.type) {
+        case SystemEventType::SLEEP_REQ:
+            LOG_PRINTLN("[Input] ESC in LIST - entering sleep");
+            enterSleepMode();
+            return;
 
-    // Draw GUI
-    displayMgr.drawActiveGUI(tasks, taskCount, selectedTaskIndex);
+        case SystemEventType::EVENT_NAV_UP:
+            if (selectedTaskIndex > 0) {
+                selectedTaskIndex--;
+                uiDirty = true;
+            } else if (selectedTaskIndex < 0 && taskCount > 0) {
+                selectedTaskIndex = 0;
+                uiDirty = true;
+            }
+            break;
+
+        case SystemEventType::EVENT_NAV_DOWN:
+            if (selectedTaskIndex < static_cast<int>(taskCount) - 1) {
+                selectedTaskIndex++;
+                uiDirty = true;
+            }
+            break;
+
+        case SystemEventType::EVENT_SELECT:
+            if (selectedTaskIndex >= 0 &&
+                selectedTaskIndex < static_cast<int>(taskCount)) {
+                tasks[selectedTaskIndex].isCompleted =
+                    !tasks[selectedTaskIndex].isCompleted;
+                LOG_PRINTF("[Input] Toggled task %d\n", selectedTaskIndex);
+                saveTasks();
+                uiDirty = true;
+            }
+            break;
+
+        case SystemEventType::EVENT_TYPE_CHAR:
+            // 'n'/'N' is the only char that does anything in LIST view
+            if (event.param == 'n' || event.param == 'N') {
+                LOG_PRINTLN("[Input] N - opening Add Task view");
+                inputBuffer[0] = '\0';
+                inputBufferLen = 0;
+                currentState = SystemState::STATE_UI_ADD_TASK;
+                uiDirty = true;
+            }
+            break;
+
+        default:
+            break;
+    }
+}
+
+static void handleUIAddTaskEvent(const SystemEvent& event) {
+    switch (event.type) {
+        case SystemEventType::SLEEP_REQ:
+            // ESC in ADD_TASK = cancel, not sleep
+            LOG_PRINTLN("[Input] ESC in ADD - canceling");
+            inputBuffer[0] = '\0';
+            inputBufferLen = 0;
+            currentState = SystemState::STATE_UI_LIST;
+            uiDirty = true;
+            break;
+
+        case SystemEventType::EVENT_TYPE_CHAR: {
+            int c = event.param;
+            if (inputBufferLen < INPUT_BUFFER_SIZE - 1 &&
+                c >= 0x20 && c <= 0x7E) {
+                inputBuffer[inputBufferLen++] = static_cast<char>(c);
+                inputBuffer[inputBufferLen] = '\0';
+                uiDirty = true;
+            }
+            break;
+        }
+
+        case SystemEventType::EVENT_BACKSPACE:
+            if (inputBufferLen > 0) {
+                inputBuffer[--inputBufferLen] = '\0';
+                uiDirty = true;
+            }
+            break;
+
+        case SystemEventType::EVENT_SELECT:
+            if (inputBufferLen > 0 && taskCount < MAX_TASKS) {
+                tasks[taskCount] = TaskItem(inputBuffer, false, millis());
+                taskCount++;
+                LOG_PRINTF("[Input] Added task: %s\n", inputBuffer);
+                if (selectedTaskIndex < 0) {
+                    selectedTaskIndex = 0;
+                }
+                saveTasks();
+            }
+            inputBuffer[0] = '\0';
+            inputBufferLen = 0;
+            currentState = SystemState::STATE_UI_LIST;
+            uiDirty = true;
+            break;
+
+        default:
+            break;
+    }
 }
 
 void handleSleepState() {
@@ -320,8 +369,12 @@ void setup() {
     }
     LOG_PRINTF("[Setup] Loaded %u tasks\n", taskCount);
 
-    LOG_PRINTLN("[Setup] Entering ACTIVE state");
-    currentState = SystemState::STATE_ACTIVE;
+    LOG_PRINTLN("[Setup] Entering UI_LIST state");
+    currentState = SystemState::STATE_UI_LIST;
+    selectedTaskIndex = (taskCount > 0) ? 0 : -1;
+    inputBuffer[0] = '\0';
+    inputBufferLen = 0;
+    uiDirty = true;
     
     // TEST_START: Systems Test initialization
     #ifdef STike_SYSTEM_TEST
@@ -341,19 +394,43 @@ void loop() {
     #endif
     // TEST_END: Systems Test
     
-    switch (currentState) {
-        case SystemState::STATE_ACTIVE:
-            handleActiveState();
-            break;
+    if (currentState == SystemState::STATE_SLEEP) {
+        handleSleepState();
+        return;
+    }
 
-        case SystemState::STATE_SLEEP:
-            handleSleepState();
-            break;
+    // Drain all pending events, dispatching by current UI state
+    SystemEvent event;
+    while (xQueueReceive(systemEventQueue, &event, 0) == pdTRUE) {
+        switch (currentState) {
+            case SystemState::STATE_UI_LIST:
+                handleUIListEvent(event);
+                break;
+            case SystemState::STATE_UI_ADD_TASK:
+                handleUIAddTaskEvent(event);
+                break;
+            default:
+                break;
+        }
+        // A sleep transition mid-drain: stop processing immediately
+        if (currentState == SystemState::STATE_SLEEP) {
+            return;
+        }
+    }
 
-        default:
-            LOG_PRINTLN("[Error] Unknown state, resetting to ACTIVE");
-            currentState = SystemState::STATE_ACTIVE;
-            break;
+    // Only redraw when state has actually changed
+    if (uiDirty) {
+        switch (currentState) {
+            case SystemState::STATE_UI_LIST:
+                displayMgr.drawActiveGUI(tasks, taskCount, selectedTaskIndex);
+                break;
+            case SystemState::STATE_UI_ADD_TASK:
+                displayMgr.drawAddViewGUI(inputBuffer);
+                break;
+            default:
+                break;
+        }
+        uiDirty = false;
     }
 
     delay(50);

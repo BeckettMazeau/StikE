@@ -6,8 +6,6 @@
 #include "state_types.h"
 #include "pins.h"
 
-extern SPIClass epd_spi;
-
 class DisplayManager {
 public:
     GxEPD2_BW<GxEPD2_213_B74, GxEPD2_213_B74::HEIGHT>& getEPD() { return epd; }
@@ -25,6 +23,7 @@ public:
     void prepareEpaperViews(const TaskItem tasks[], uint32_t taskCount);
 
     void drawActiveGUI(const TaskItem tasks[], uint32_t taskCount, int selectedIndex);
+    void drawAddViewGUI(const char* currentInput);
 
     TFT_eSPI& getTFT() { return tft; }
     bool isTFTOn() const { return tftOn; }

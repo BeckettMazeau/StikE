@@ -1,6 +1,11 @@
 {
 	"folders": [
 		{
+			"name": "DualDisplayTest",
+			"path": "../DualDisplayTest"
+		},
+		{
+			"name": "StikE",
 			"path": "."
 		},
 		{
@@ -10,10 +15,6 @@
 		{
 			"name": "ePaperTest",
 			"path": "../ePaperTest"
-		},
-		{
-			"name": "DualDisplayTest",
-			"path": "../DualDisplayTest"
 		}
 	],
 	"settings": {}

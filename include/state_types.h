@@ -4,17 +4,20 @@
 #include <cstring>
 
 enum class SystemState {
-    STATE_ACTIVE,
+    STATE_UI_LIST,
+    STATE_UI_ADD_TASK,
     STATE_SLEEP,
     STATE_EPAPER_UPDATE
 };
 
 enum class SystemEventType {
-    KEY_PRESS,
+    EVENT_NAV_UP,
+    EVENT_NAV_DOWN,
+    EVENT_SELECT,
+    EVENT_TYPE_CHAR,
+    EVENT_BACKSPACE,
     SLEEP_REQ,
-    WAKE_REQ,
-    TASK_ADDED,
-    TASK_TOGGLED
+    WAKE_REQ
 };
 
 struct SystemEvent {
@@ -44,3 +47,4 @@ struct TaskItem {
 constexpr uint32_t MAX_TASKS = 20;
 constexpr uint32_t EPAPER_VIEW_COUNT = 5;
 constexpr uint64_t SLEEP_DURATION_US = 10 * 1000000ULL;
+constexpr uint32_t INPUT_BUFFER_SIZE = 32;
