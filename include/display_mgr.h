@@ -10,6 +10,8 @@ extern SPIClass epd_spi;
 
 class DisplayManager {
 public:
+    GxEPD2_BW<GxEPD2_213_B74, GxEPD2_213_B74::HEIGHT>& getEPD() { return epd; }
+public:
     DisplayManager();
     ~DisplayManager();
 

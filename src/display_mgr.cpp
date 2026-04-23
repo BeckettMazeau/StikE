@@ -28,11 +28,18 @@ DisplayManager::~DisplayManager() {
 }
 
 void DisplayManager::initTFT() {
+    Serial.println("[DisplayMgr] initTFT: about to call tft.init()");
+    
+    // Removed manual SPI.begin(); TFT_eSPI will handle bus init
+    Serial.println("[DisplayMgr] Skipping manual SPI.begin()");
+    
     tft.init();
+    Serial.println("[DisplayMgr] tft.init() returned");
     tft.setRotation(1);
     tftOn = true;
     
     // Initialize GUI sprite in PSRAM (128x160x16bpp = 40KB)
+    Serial.println("[DisplayMgr] Creating sprite...");
     guiSprite = new TFT_eSprite(&tft);
     if (guiSprite && guiSprite->createSprite(tft.width(), tft.height())) {
         guiSprite->setColorDepth(16);

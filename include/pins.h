@@ -14,7 +14,7 @@ constexpr uint8_t EP_BUSY = 8;
 constexpr uint8_t EP_SCK  = 17;
 constexpr uint8_t EP_MOSI = 21;
 
-constexpr uint8_t LCD_SCK   = 13;
+constexpr uint8_t LCD_SCK   = 12;
 constexpr uint8_t LCD_MOSI  = 11;
 constexpr uint8_t LCD_MISO  = 0xFF;  // Not Connected (SPI readback not used)
 constexpr uint8_t LCD_CS    = 10;

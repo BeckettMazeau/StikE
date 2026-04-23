@@ -11,8 +11,20 @@
 #include "display_mgr.h"
 #include "keyboard_mgr.h"
 
+// TEST_START: Systems Test
+#ifdef STike_SYSTEM_TEST
+#include "systems_test.h"
+#endif
+// TEST_END: Systems Test
+
 DisplayManager displayMgr;
 KeyboardManager keyboardMgr;
+
+// TEST_START: Systems Test
+#ifdef STike_SYSTEM_TEST
+SystemsTest systemsTest;
+#endif
+// TEST_END: Systems Test
 
 // Event queue for system events
 QueueHandle_t systemEventQueue = nullptr;
@@ -254,9 +266,17 @@ void setup() {
     delay(500);
     LOG_PRINTLN("\n=== StikE Firmware Starting ===");
 
+    LOG_PRINTLN("[Setup] Calling displayMgr.initTFT()...");
     displayMgr.initTFT();
+    LOG_PRINTLN("[Setup] displayMgr.initTFT() returned");
+    
+    LOG_PRINTLN("[Setup] Calling displayMgr.initEpaper()...");
     displayMgr.initEpaper();
+    LOG_PRINTLN("[Setup] displayMgr.initEpaper() returned");
+    
+    LOG_PRINTLN("[Setup] Calling keyboardMgr.init()...");
     keyboardMgr.init();
+    LOG_PRINTLN("[Setup] keyboardMgr.init() returned");
 
     pinMode(Pins::WAKE_BTN, INPUT_PULLUP);
     attachInterrupt(Pins::WAKE_BTN, wakeButtonISR, FALLING);
@@ -293,9 +313,25 @@ void setup() {
 
     LOG_PRINTLN("[Setup] Entering ACTIVE state");
     currentState = SystemState::STATE_ACTIVE;
+    
+    // TEST_START: Systems Test initialization
+    #ifdef STike_SYSTEM_TEST
+    systemsTest.init();
+    #endif
+    // TEST_END: Systems Test
 }
 
 void loop() {
+    // TEST_START: Systems Test
+    #ifdef STike_SYSTEM_TEST
+    if (SystemsTest::isTestMode()) {
+        systemsTest.update();
+        delay(50);
+        return;
+    }
+    #endif
+    // TEST_END: Systems Test
+    
     switch (currentState) {
         case SystemState::STATE_ACTIVE:
             handleActiveState();
