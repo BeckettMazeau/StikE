@@ -3,7 +3,7 @@
 #include "display_mgr.h"
 #include "state_types.h"
 
-constexpr int MISO_DUMMY = 35;
+constexpr int MISO_DUMMY = -1;
 
 // Dedicated HSPI bus for ePaper (separate from TFT's VSPI)
 SPIClass epd_spi(HSPI);

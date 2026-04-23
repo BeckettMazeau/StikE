@@ -12,7 +12,7 @@ pio device monitor
 ## Architecture
 
 - **Dual display**: TFT (ST7735S, active mode) + ePaper (GDEQ0213B74, sleep mode)
-- **Input**: I2C keyboard on GPIO 1 (SDA), 2 (SCL)
+- **Input**: I2C keyboard on GPIO 18 (SDA), 16 (SCL)
 - **Storage**: NVS via Preferences library
 - **RTOS**: FreeRTOS with keyboard task pinned to core 0
 

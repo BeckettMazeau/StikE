@@ -2,6 +2,14 @@
 	"folders": [
 		{
 			"path": "."
+		},
+		{
+			"name": "TFT_Test",
+			"path": "../TFT_Test"
+		},
+		{
+			"name": "ePaperTest",
+			"path": "../ePaperTest"
 		}
 	],
 	"settings": {}

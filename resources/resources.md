@@ -27,7 +27,7 @@ The system alternates between ACTIVE mode (interactive TFT) and SLEEP mode (ePap
 ### TFT Display (SPI - VSPI Bus)
 | Signal | GPIO | Notes |
 |--------|------|-------|
-| SCLK | 13 | SPI clock (VSPI) |
+| SCLK | 12 | SPI clock (VSPI) |
 | MOSI | 11 | SPI data out (VSPI) |
 | MISO | NC | Not connected (readback not used) |
 | CS | 10 | SPI chip select |
@@ -38,8 +38,8 @@ The system alternates between ACTIVE mode (interactive TFT) and SLEEP mode (ePap
 ### Keyboard (I2C)
 | Signal | GPIO | Notes |
 |--------|------|-------|
-| SDA | 1 | I2C data |
-| SCL | 2 | I2C clock |
+| SDA | 18 | I2C data |
+| SCL | 16 | I2C clock |
 
 ### Wake Button
 | Signal | GPIO | Notes |
