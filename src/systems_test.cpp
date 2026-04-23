@@ -228,7 +228,9 @@ void SystemsTest::drawEpaperTestPattern() {
     uint8_t pattern = m_testCycle % 4;
     
     Serial.printf("[TEST] ePaper pattern #%u (cycle %lu)\n", pattern, m_testCycle);
+#ifndef DIAG_UI_ONLY
     displayMgr.updateEpaperPartial(pattern);
+#endif
     
     delay(100);
     

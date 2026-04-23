@@ -295,7 +295,9 @@ static void handleUIAddTaskEvent(const SystemEvent& event) {
 void handleSleepState() {
     LOG_PRINTF("[Sleep] Cycle %u, view %d\n", sleepCycleCount, currentEpaperView);
 
+#ifndef DIAG_UI_ONLY
     displayMgr.updateEpaperPartial(currentEpaperView);
+#endif
     currentEpaperView = (currentEpaperView + 1) % EPAPER_VIEW_COUNT;
     sleepCycleCount++;
 
@@ -360,6 +362,39 @@ void setup() {
     if (result != pdPASS) {
         LOG_PRINTLN("[ERROR] Failed to create keyboard task");
     }
+
+    // Smoke-test drawing path to aid debugging UI rendering
+#ifdef STike_SYSTEM_TEST
+    Serial.println("[SYS_TEST] Triggering UI smoke test (MAGENTA)");
+    displayMgr.drawSmokeTest();
+#endif
+
+// Also run a full-red screen diagnostic to ensure the end-to-end write path remains healthy
+#ifdef STike_SYSTEM_TEST
+    Serial.println("[SYS_TEST] Triggering full-red screen diagnostic");
+    displayMgr.drawTestFullRed();
+#endif
+
+// Overlay diagnostic to verify end-to-end render path (cross on screen)
+//#ifdef STike_SYSTEM_TEST
+//    Serial.println("[SYS_TEST] Triggering diagnostic overlay");
+//    displayMgr.drawTestOverlay();
+//#endif
+
+// Direct diagnostic path: drawMagenta directly bypassing the sprite to confirm TFT path
+#ifdef STike_SYSTEM_TEST
+    Serial.println("[SYS_TEST] Triggering direct color frame (MAGENTA) bypass sprite");
+    displayMgr.drawDirectColorFrame(TFT_MAGENTA);
+#endif
+
+// Simple sprite test - tiny sprite to verify sprite path works
+#ifdef STike_SYSTEM_TEST
+    Serial.println("[SYS_TEST] Triggering simple sprite test (64x32)");
+    displayMgr.drawActiveGUISimpleTest();
+#endif
+
+// Tiny extra test to verify full-screen write path (red screen)
+
 
     // Load tasks from NVS
     loadTasks();
