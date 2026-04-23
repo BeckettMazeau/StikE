@@ -29,7 +29,7 @@ The system alternates between ACTIVE mode (interactive TFT) and SLEEP mode (ePap
 |--------|------|-------|
 | SCLK | 13 | SPI clock (VSPI) |
 | MOSI | 11 | SPI data out (VSPI) |
-| MISO | 12 | SPI data in (VSPI) |
+| MISO | NC | Not connected (readback not used) |
 | CS | 10 | SPI chip select |
 | DC | 9 | Data/Command pin |
 | RESET | 14 | Hardware reset |
@@ -953,6 +953,7 @@ Quick fixes for common issues.
 | Is backlight enabled? | Ensure `digitalWrite(Pins::LCD_BL, HIGH)` is called |
 | Is sprite created? | Check `guiSprite != nullptr` after init |
 | Are colors visible? | Try `TFT_WHITE` on `TFT_BLACK` background |
+| Is MISO pin set? | Set `-D TFT_MISO=-1` in platformio.ini if display has no MISO |
 
 **Quick test**: Add this to `setup()`:
 ```cpp
@@ -961,6 +962,27 @@ delay(1000);
 tft.fillScreen(TFT_GREEN);
 delay(1000);
 tft.fillScreen(TFT_BLUE);
+```
+
+#### Issue: Display Has No MISO Pin
+
+Some TFT displays (like ST7735S) don't have an MISO pin. This causes display issues.
+
+| Check | Fix |
+|-------|-----|
+| Is MISO defined in platformio.ini? | Set `-D TFT_MISO=-1` |
+| Is LCD_MISO set in pins.h? | Set to `0xFF` or remove |
+
+**Fix in platformio.ini**:
+```ini
+build_flags =
+    ; ... other flags ...
+    -D TFT_MISO=-1    ; Set to -1 if display has no MISO pin
+```
+
+**Fix in include/pins.h**:
+```cpp
+constexpr uint8_t LCD_MISO = 0xFF;  // Not Connected
 ```
 
 #### Issue: Tasks Not Saving to NVS

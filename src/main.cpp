@@ -34,6 +34,7 @@ Preferences prefs;
 // Sleep-safe logging macros
 #define LOG_PRINT(...)   do { if (Serial) Serial.print(__VA_ARGS__); } while(0)
 #define LOG_PRINTLN(...) do { if (Serial) Serial.println(__VA_ARGS__); } while(0)
+#define LOG_PRINTF(...)  do { if (Serial) { char _buf[256]; snprintf(_buf, sizeof(_buf), __VA_ARGS__); Serial.print(_buf); } } while(0)
 
 void IRAM_ATTR wakeButtonISR() {
     wakeRequested = true;
