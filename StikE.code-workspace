@@ -10,6 +10,10 @@
 		{
 			"name": "ePaperTest",
 			"path": "../ePaperTest"
+		},
+		{
+			"name": "DualDisplayTest",
+			"path": "../DualDisplayTest"
 		}
 	],
 	"settings": {}
