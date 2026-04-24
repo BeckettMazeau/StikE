@@ -4,6 +4,7 @@
 #include <LittleFS.h>
 #include <FS.h>
 #include "display_mgr.h"
+#include <algorithm>
 #include "state_types.h"
 #include "icons.h"
 
@@ -52,40 +53,41 @@ void DisplayManager::initBusesAndDisplays() {
     epd.setFullWindow();
     delay(100);
 
-    // 2. Draw initial ePaper content while SPI bus is still pristine
-    Serial.println("[DisplayMgr] Drawing initial ePaper screen...");
-    epd.firstPage();
-    do {
-        epd.fillScreen(GxEPD_WHITE);
-        epd.setCursor(0, 50);
-        epd.print("StikE Init");
-    } while (epd.nextPage());
+    // 2. Draw initial ePaper logo while SPI bus is still pristine
+    Serial.println("[DisplayMgr] Drawing ePaper logo...");
+    drawEpaperLogo();
 
     // 3. Hibernate ePaper — done with FSPI until sleep mode
-    // Give the ePaper controller enough time to finish the waveform before powering down.
-    delay(2000); // extended settle time
     Serial.println("[DisplayMgr] Hibernating ePaper...");
     epd.hibernate();
-    delay(100);
+    delay(50); // Reduced settle time
 
     // === TFT: Now safe to initialize HSPI for the TFT ===
 
     // 4. Initialize TFT and backlight
     Serial.println("[DisplayMgr] Init TFT...");
     pinMode(Pins::LCD_BL, OUTPUT);
-    digitalWrite(Pins::LCD_BL, HIGH);
+    analogWrite(Pins::LCD_BL, 255);
     
     tft.init();
     tft.setRotation(1);
     tft.setSwapBytes(true);
-    tft.setTextFont(1);
-    tft.fillScreen(TFT_BLACK); // Clear entire GRAM including edge pixels
+    tft.fillScreen(TFT_BLACK);
     tftOn = true;
 
-    // 5. Initialize LittleFS and load Smooth Font
+    // 5. Draw TFT Boot Logo immediately
+    drawBootLogo();
+
+    // 6. Initialize LittleFS and load Smooth Font (deferred)
     Serial.println("[DisplayMgr] Init LittleFS...");
     if (!LittleFS.begin()) {
-        Serial.println("[DisplayMgr] ERROR: LittleFS mount failed");
+        Serial.println("[DisplayMgr] ERROR: LittleFS mount failed, formatting...");
+        LittleFS.format();
+        if (LittleFS.begin()) {
+            Serial.println("[DisplayMgr] LittleFS formatted and mounted");
+        } else {
+            Serial.println("[DisplayMgr] CRITICAL: LittleFS format failed");
+        }
     } else {
         // We look for a font file named "Outfit-Medium-12.vlw" or similar
         // If not found, we'll fall back to default, but the logic is enabled.
@@ -100,15 +102,13 @@ void DisplayManager::initBusesAndDisplays() {
         }
     }
 
-    // 6. Create GUI sprite
+    // 7. Create GUI sprite
     Serial.println("[DisplayMgr] Creating GUI sprite...");
     guiSprite = new TFT_eSprite(&tft);
     if (guiSprite) {
         guiSprite->setColorDepth(16);
         if (guiSprite->createSprite(tft.width(), tft.height())) {
             guiSprite->setSwapBytes(true);
-            // If font was loaded to tft, it's shared/inherited? 
-            // Actually for sprites we need to loadFont on the sprite too if we want smooth fonts there.
             if (LittleFS.exists("/Outfit-Medium-12.vlw")) {
                 guiSprite->loadFont("Outfit-Medium-12", LittleFS);
             } else if (LittleFS.exists("/Inter-Regular-12.vlw")) {
@@ -126,18 +126,91 @@ void DisplayManager::initBusesAndDisplays() {
     }
 }
 
+void DisplayManager::drawBootLogo() {
+    // This is called right after tft.init() to show something FAST
+    // We use built-in font for speed before smooth fonts are loaded
+    tft.fillScreen(TFT_BLACK);
+    
+    // Draw "StikE"
+    tft.setTextColor(TFT_WHITE);
+    tft.setTextSize(2);
+    tft.setTextDatum(MC_DATUM);
+    tft.setTextFont(4);
+    tft.drawString("StikE", tft.width() / 2 - 15, tft.height() / 2);
+    
+    // Draw Sticky Note Icon next to text
+    int size = 24;
+    int x = tft.width() / 2 + 50;
+    int y = tft.height() / 2 - 12;
+    
+    tft.fillRect(x, y, size, size, TFT_YELLOW);
+    // Folded corner
+    int fold = 8;
+    tft.fillTriangle(x + size - fold, y + size, x + size, y + size, x + size, y + size - fold, TFT_BLACK);
+    tft.fillTriangle(x + size - fold, y + size, x + size - fold, y + size - fold, x + size, y + size - fold, tft.color565(200, 200, 0));
+    
+    // Subtle shadow for the note
+    tft.drawRect(x, y, size, size, tft.color565(100, 100, 0));
+}
+
+void DisplayManager::drawEpaperLogo() {
+    // Ensure SPI bus is ready
+    SPI.begin(Pins::EP_SCK, -1, Pins::EP_MOSI, Pins::EP_CS);
+    epd.init(115200);
+    epd.setRotation(1);
+    epd.setFullWindow();
+
+    const int W = epd.width();
+    const int H = epd.height();
+
+    epd.firstPage();
+    do {
+        epd.fillScreen(GxEPD_WHITE);
+        
+        // Draw "StikE"
+        epd.setTextColor(GxEPD_BLACK);
+        epd.setTextSize(4);
+        epd.setCursor(W / 2 - 70, H / 2 - 15);
+        epd.print("StikE");
+        
+        // Sticky note icon
+        int size = 30;
+        int x = W / 2 + 50;
+        int y = H / 2 - 15;
+        
+        epd.drawRect(x, y, size, size, GxEPD_BLACK);
+        int fold = 10;
+        epd.drawLine(x + size - fold, y + size, x + size, y + size - fold, GxEPD_BLACK);
+        epd.drawLine(x + size - fold, y + size, x + size - fold, y + size - fold, GxEPD_BLACK);
+        epd.drawLine(x + size, y + size - fold, x + size - fold, y + size - fold, GxEPD_BLACK);
+        
+    } while (epd.nextPage());
+}
+
 void DisplayManager::turnOnTFT() {
     if (!tftOn) {
         // No more shared pin configuration needed - LCD_BL on GPIO 42 is dedicated
         tft.writecommand(ST7735_SLPOUT);
-        delay(120);  // Physical wake-up time for ST7735S
+        tftWakeTime = millis() + 120; // Physical wake-up time for ST7735S
         tftOn = true;
+    }
+}
+
+void DisplayManager::checkTFTWakeDelay() {
+    if (tftOn && tftWakeTime > 0) {
+        unsigned long now = millis();
+        if (now < tftWakeTime) {
+            delay(tftWakeTime - now);
+        }
+        tftWakeTime = 0; // Delay complete
     }
 }
 
 void DisplayManager::turnOffTFT() {
     if (tftOn) {
         tft.writecommand(ST7735_SLPIN);
+        // Explicitly switch to GPIO mode and pull to GND
+        pinMode(Pins::LCD_BL, OUTPUT);
         digitalWrite(Pins::LCD_BL, LOW);
         tftOn = false;
     }
@@ -168,26 +241,6 @@ bool isWithin24Hours(const CalendarEvent& ev, uint16_t curYear, uint8_t curMonth
     return false;
 }
 
-// Issue 4: Word-boundary-aware string truncation for ePaper display.
-// Copies at most maxChars of src into dst (including NUL), breaking at a word
-// boundary if the string is longer than maxChars. Appends "." if truncated.
-// dst must be at least maxChars+2 bytes.
-void truncateAtWord(char* dst, const char* src, int maxChars) {
-    int srcLen = strlen(src);
-    if (srcLen <= maxChars) {
-        strncpy(dst, src, maxChars + 1);
-        dst[maxChars] = '\0';
-        return;
-    }
-    // Find the last space at or before maxChars-1 (leave 1 char for '.')
-    int cutAt = maxChars - 1;
-    for (int i = cutAt; i > 0; i--) {
-        if (src[i] == ' ') { cutAt = i; break; }
-    }
-    strncpy(dst, src, cutAt);
-    dst[cutAt] = '.';
-    dst[cutAt + 1] = '\0';
-}
 }
 
 
@@ -210,29 +263,13 @@ void DisplayManager::prepareEpaperViews(const TaskItem tasks[], uint32_t taskCou
     }
 
     // Sort eligibleEvents by time (soonest first)
-    for (uint32_t i = 0; i < eligibleEventCount; i++) {
-        for (uint32_t j = i + 1; j < eligibleEventCount; j++) {
-            bool swap = false;
-            if (eligibleEvents[i].year > eligibleEvents[j].year) swap = true;
-            else if (eligibleEvents[i].year == eligibleEvents[j].year) {
-                if (eligibleEvents[i].month > eligibleEvents[j].month) swap = true;
-                else if (eligibleEvents[i].month == eligibleEvents[j].month) {
-                    if (eligibleEvents[i].day > eligibleEvents[j].day) swap = true;
-                    else if (eligibleEvents[i].day == eligibleEvents[j].day) {
-                        if (eligibleEvents[i].hour > eligibleEvents[j].hour) swap = true;
-                        else if (eligibleEvents[i].hour == eligibleEvents[j].hour) {
-                            if (eligibleEvents[i].minute > eligibleEvents[j].minute) swap = true;
-                        }
-                    }
-                }
-            }
-            if (swap) {
-                CalendarEvent tmp = eligibleEvents[i];
-                eligibleEvents[i] = eligibleEvents[j];
-                eligibleEvents[j] = tmp;
-            }
-        }
-    }
+    std::sort(eligibleEvents, eligibleEvents + eligibleEventCount, [](const CalendarEvent& a, const CalendarEvent& b) {
+        if (a.year != b.year) return a.year < b.year;
+        if (a.month != b.month) return a.month < b.month;
+        if (a.day != b.day) return a.day < b.day;
+        if (a.hour != b.hour) return a.hour < b.hour;
+        return a.minute < b.minute;
+    });
 
     // 2. Take maximum 2 soonest events
     uint32_t eventsToTake = (eligibleEventCount > 2) ? 2 : eligibleEventCount;
@@ -608,6 +645,7 @@ void DisplayManager::drawTestOverlay() {
 
 // Direct hardware color fill test (bypassing the sprite pipeline)
 void DisplayManager::drawDirectColorFrame(uint16_t color) {
+    checkTFTWakeDelay();
     // This is a direct write to the TFT to verify the bus can render a frame
     if (!guiSprite) {
         tft.fillScreen(color);
@@ -617,6 +655,14 @@ void DisplayManager::drawDirectColorFrame(uint16_t color) {
     // If sprite exists, we still perform a direct fill on the TFT to bypass sprite buffer
     tft.fillScreen(color);
     Serial.printf("[SYS_TEST] Direct color frame drawn (sprite present) 0x%04X\n", color);
+}
+void DisplayManager::drawSyncStatus(const char* status) {
+    if (!guiSprite) return;
+    guiSprite->fillSprite(guiSprite->color565(0, 0, 100)); // Dark Navy
+    guiSprite->setTextColor(TFT_WHITE);
+    guiSprite->setTextDatum(MC_DATUM);
+    guiSprite->drawString(status, guiSprite->width() / 2, guiSprite->height() / 2);
+    pushDirtySprite(offsetX, offsetY);
 }
 
 // Simple sprite test - tiny sprite to verify sprite path works
@@ -658,7 +704,7 @@ void DisplayManager::drawActiveGUISimpleTest() {
     Serial.println("[SYS_TEST] Simple sprite test complete");
 }
 
-void DisplayManager::drawAddViewGUI(const char* currentInput, int activeField, bool hasDue, int y, int m, int d, int h, int min) {
+void DisplayManager::drawAddViewGUI(const char* currentInput, int cursorIdx, int activeField, bool hasDue, int y, int m, int d, int h, int min) {
     if (!guiSprite) return;
 
     const int W = guiSprite->width();
@@ -682,16 +728,7 @@ void DisplayManager::drawAddViewGUI(const char* currentInput, int activeField, b
     guiSprite->print("Title:");
     curY += 10;
     // Title input box — show only the last N chars so the cursor stays visible.
-    {
-        int maxVisible = (W - 14) / 6;
-        const char* displayStr = currentInput;
-        int inputLen = strlen(currentInput);
-        if (inputLen > maxVisible) displayStr = currentInput + (inputLen - maxVisible);
-        guiSprite->fillRect(4, curY, W - 8, 12, activeField == 0 ? TFT_WHITE : TFT_DARKGREY);
-        guiSprite->setTextColor(activeField == 0 ? TFT_BLACK : TFT_WHITE, activeField == 0 ? TFT_WHITE : TFT_DARKGREY);
-        guiSprite->setCursor(6, curY + 2);
-        guiSprite->printf("%s%s", displayStr, activeField == 0 ? "_" : "");
-    }
+    drawInputBox(4, curY, W - 8, 12, currentInput, cursorIdx, activeField == 0);
     curY += 18;
 
     // Field 1: Has Due Date
@@ -752,7 +789,7 @@ void DisplayManager::drawAddViewGUI(const char* currentInput, int activeField, b
     pushDirtySprite(offsetX, offsetY);
 }
 
-void DisplayManager::drawEditViewGUI(const char* currentInput, int activeField, bool hasDue, int y, int m, int d, int h, int min) {
+void DisplayManager::drawEditViewGUI(const char* currentInput, int cursorIdx, int activeField, bool hasDue, int y, int m, int d, int h, int min) {
     if (!guiSprite) return;
 
     const int W = guiSprite->width();
@@ -776,16 +813,7 @@ void DisplayManager::drawEditViewGUI(const char* currentInput, int activeField, 
     guiSprite->print("Title:");
     curY += 10;
     // Title input box — show only the last N chars so the cursor stays visible.
-    {
-        int maxVisible = (W - 14) / 6;
-        const char* displayStr = currentInput;
-        int inputLen = strlen(currentInput);
-        if (inputLen > maxVisible) displayStr = currentInput + (inputLen - maxVisible);
-        guiSprite->fillRect(4, curY, W - 8, 12, activeField == 0 ? TFT_WHITE : TFT_DARKGREY);
-        guiSprite->setTextColor(activeField == 0 ? TFT_BLACK : TFT_WHITE, activeField == 0 ? TFT_WHITE : TFT_DARKGREY);
-        guiSprite->setCursor(6, curY + 2);
-        guiSprite->printf("%s%s", displayStr, activeField == 0 ? "_" : "");
-    }
+    drawInputBox(4, curY, W - 8, 12, currentInput, cursorIdx, activeField == 0);
     curY += 18;
 
 
@@ -847,13 +875,13 @@ void DisplayManager::drawEditViewGUI(const char* currentInput, int activeField, 
     pushDirtySprite(offsetX, offsetY);
 }
 
-void DisplayManager::drawQuickAddGUI(const char* currentInput) {
+void DisplayManager::drawQuickAddGUI(const char* currentInput, int cursorIdx) {
     if (!guiSprite) return;
 
     const int W = guiSprite->width();
     const int H = guiSprite->height();
-    const uint16_t headerStart = guiSprite->color565(0, 140, 0); // Green for Quick Add
-    const uint16_t headerEnd   = guiSprite->color565(0, 60, 0);
+    const uint16_t headerStart = guiSprite->color565(0, 0, 140);
+    const uint16_t headerEnd   = guiSprite->color565(0, 0, 60);
 
     guiSprite->fillSprite(TFT_BLACK);
 
@@ -863,34 +891,17 @@ void DisplayManager::drawQuickAddGUI(const char* currentInput) {
     guiSprite->setCursor(4, 3);
     guiSprite->print("== QUICK ADD ==");
 
-    int curY = HEADER_H + 20;
-    
-    // Title Field
     guiSprite->setTextColor(TFT_WHITE, TFT_BLACK);
-    guiSprite->setCursor(4, curY);
-    guiSprite->print("Task Title:");
-    curY += 14;
-    {
-        int maxVisible = (W - 14) / 6;
-        const char* displayStr = currentInput;
-        int inputLen = strlen(currentInput);
-        if (inputLen > maxVisible) displayStr = currentInput + (inputLen - maxVisible);
-        guiSprite->fillRect(4, curY, W - 8, 12, TFT_WHITE);
-        guiSprite->setTextColor(TFT_BLACK, TFT_WHITE);
-        guiSprite->setCursor(6, curY + 2);
-        guiSprite->printf("%s_", displayStr);
-    }
+    guiSprite->setCursor(4, HEADER_H + 10);
+    guiSprite->print("Task title (@time):");
 
-    // Footer
-    drawVGradient(guiSprite, 0, H - FOOTER_H, W, FOOTER_H, headerStart, headerEnd);
-    guiSprite->setTextColor(TFT_WHITE);
-    guiSprite->setCursor(4, H - FOOTER_H + 6);
-    guiSprite->print("ENT:Save ESC:Cancel");
-
+    drawInputBox(4, HEADER_H + 25, W - 8, 12, currentInput, cursorIdx, true);
+    
     pushDirtySprite(offsetX, offsetY);
 }
 
 void DisplayManager::clearFullHardwareScreen() {
+    checkTFTWakeDelay();
     tft.fillScreen(TFT_BLACK);
     forceFullRedraw();
 }
@@ -900,6 +911,8 @@ void DisplayManager::forceFullRedraw() {
 }
 
 void DisplayManager::pushDirtySprite(int x, int y) {
+    checkTFTWakeDelay();
+
     if (!guiSprite) return;
     
     int w = guiSprite->width();
@@ -911,11 +924,27 @@ void DisplayManager::pushDirtySprite(int x, int y) {
     
     // We iterate row by row and compare hashes to find dirty regions.
     // To minimize SPI transaction overhead, we batch contiguous dirty rows.
+    int w_fast = w & ~7;
     for (int i = 0; i < h; i++) {
-        // DJB2-style hash for the row
+        // Optimized DJB2 hash utilizing 16-bit unrolling
+        // Note: Avoided 32-bit cast (w/ 2 loop) to prevent Undefined Behavior
+        // due to strict aliasing and potential unaligned hardware access faults.
         uint32_t hash = 5381;
         uint16_t* rowPtr = ptr + i * w;
-        for (int j = 0; j < w; j++) {
+        int j = 0;
+
+        // Unroll by 8 to reduce loop overhead
+        for (; j < w_fast; j += 8) {
+            hash = ((hash << 5) + hash) + rowPtr[j];
+            hash = ((hash << 5) + hash) + rowPtr[j+1];
+            hash = ((hash << 5) + hash) + rowPtr[j+2];
+            hash = ((hash << 5) + hash) + rowPtr[j+3];
+            hash = ((hash << 5) + hash) + rowPtr[j+4];
+            hash = ((hash << 5) + hash) + rowPtr[j+5];
+            hash = ((hash << 5) + hash) + rowPtr[j+6];
+            hash = ((hash << 5) + hash) + rowPtr[j+7];
+        }
+        for (; j < w; j++) {
             hash = ((hash << 5) + hash) + rowPtr[j];
         }
         
@@ -1050,6 +1079,14 @@ void DisplayManager::drawCalendarGUI(CalendarView view, int year, int month, int
     int bodyH = H - HEADER_H - FOOTER_H - 4;
 
     if (view == CalendarView::MONTH) {
+        // Pre-calculate event counts for each day of the month to optimize traversal
+        uint8_t dailyEventCounts[32] = {0};
+        for (uint32_t e = 0; e < eventCount; e++) {
+            if (events[e].month == month && events[e].year == year && events[e].day >= 1 && events[e].day <= 31) {
+                dailyEventCounts[events[e].day]++;
+            }
+        }
+
         int cellW = W / 7;
         int cellH = bodyH / 5;
         int days = getDaysInMonth(year, month);
@@ -1060,10 +1097,7 @@ void DisplayManager::drawCalendarGUI(CalendarView view, int year, int month, int
             int y = bodyY + row * cellH;
             
             int dayNum = i + 1;
-            int dayEvents = 0;
-            for (uint32_t e = 0; e < eventCount; e++) {
-                if (events[e].day == dayNum && events[e].month == month && events[e].year == year) dayEvents++;
-            }
+            int dayEvents = dailyEventCounts[dayNum];
 
             if (dayNum == day) {
                 guiSprite->fillRect(x, y, cellW, cellH, TFT_WHITE);
@@ -1200,11 +1234,12 @@ void DisplayManager::drawEventDetailGUI(const CalendarEvent& event, int scrollOf
     curY += 10;
     // Wrap title if it exceeds maxChars (though it's only 24 chars, it might fit)
     {
-        int len = strlen(event.title);
+        int len = strnlen(event.title, sizeof(event.title));
         int pos = 0;
         while (pos < len || (pos == 0 && len == 0)) {
             char line[40];
             int take = (len - pos > maxChars) ? maxChars : (len - pos);
+            if (take > (int)sizeof(line) - 1) take = sizeof(line) - 1;
             strncpy(line, event.title + pos, take);
             line[take] = '\0';
             drawBodyText(4, curY, line, TFT_WHITE);
@@ -1228,11 +1263,12 @@ void DisplayManager::drawEventDetailGUI(const CalendarEvent& event, int scrollOf
     if (event.location[0]) {
         drawBodyText(4, curY, "Location:", TFT_YELLOW);
         curY += 10;
-        int len = strlen(event.location);
+        int len = strnlen(event.location, sizeof(event.location));
         int pos = 0;
         while (pos < len) {
             char line[40];
             int take = (len - pos > maxChars) ? maxChars : (len - pos);
+            if (take > (int)sizeof(line) - 1) take = sizeof(line) - 1;
             strncpy(line, event.location + pos, take);
             line[take] = '\0';
             drawBodyText(4, curY, line, TFT_WHITE);
@@ -1246,11 +1282,12 @@ void DisplayManager::drawEventDetailGUI(const CalendarEvent& event, int scrollOf
     if (event.notes[0]) {
         drawBodyText(4, curY, "Notes:", TFT_YELLOW);
         curY += 10;
-        int len = strlen(event.notes);
+        int len = strnlen(event.notes, sizeof(event.notes));
         int pos = 0;
         while (pos < len) {
             char line[64];
             int take = (len - pos > maxChars) ? maxChars : (len - pos);
+            if (take > (int)sizeof(line) - 1) take = sizeof(line) - 1;
             strncpy(line, event.notes + pos, take);
             line[take] = '\0';
             drawBodyText(4, curY, line, TFT_LIGHTGREY);
@@ -1341,7 +1378,7 @@ void DisplayManager::drawHelpGUI(SystemState fromState) {
     pushDirtySprite(offsetX, offsetY);
 }
 
-void DisplayManager::drawAddEventGUI(const char* title, int hour, int duration, int activeField) {
+void DisplayManager::drawAddEventGUI(const char* title, int cursorIdx, int hour, int duration, int activeField) {
     if (!guiSprite) return;
     const int W = guiSprite->width();
     const int H = guiSprite->height();
@@ -1364,10 +1401,7 @@ void DisplayManager::drawAddEventGUI(const char* title, int hour, int duration, 
     guiSprite->setCursor(4, y);
     guiSprite->print("Title:");
     y += 10;
-    guiSprite->fillRect(4, y, W - 8, 12, activeField == 0 ? TFT_WHITE : TFT_DARKGREY);
-    guiSprite->setTextColor(activeField == 0 ? TFT_BLACK : TFT_WHITE, activeField == 0 ? TFT_WHITE : TFT_DARKGREY);
-    guiSprite->setCursor(6, y + 2);
-    guiSprite->printf("%s%s", title, activeField == 0 ? "_" : "");
+    drawInputBox(4, y, W - 8, 12, title, cursorIdx, activeField == 0);
     y += 20;
 
     // Field 1: Start Time
@@ -1410,4 +1444,162 @@ void DisplayManager::drawAddEventGUI(const char* title, int hour, int duration, 
     pushDirtySprite(offsetX, offsetY);
 }
 
+
+
+void DisplayManager::setTFTBrightness(uint8_t brightness) {
+    if (brightness == 0) {
+        pinMode(Pins::LCD_BL, OUTPUT);
+        digitalWrite(Pins::LCD_BL, LOW);
+    } else {
+        analogWrite(Pins::LCD_BL, brightness);
+    }
+}
+
+void DisplayManager::drawSettingsGUI(int selectedItem, uint8_t brightness, uint16_t sleepTimeout, const char* wifiSSID, const char* wifiPassword, const char* gcalURL, bool isEditingSetting, const char* inputBuffer, int cursorIdx, bool isLowPowerMode) {
+    if (!tftOn) return;
+
+    guiSprite->fillSprite(TFT_BLACK);
+
+    // Title Bar
+    guiSprite->fillRect(0, 0, 160, 14, TFT_ORANGE);
+    guiSprite->setTextColor(TFT_BLACK);
+    guiSprite->setTextDatum(TL_DATUM);
+    guiSprite->drawString(" SYSTEM SETTINGS", 2, 3);
+
+    // Help hint
+    guiSprite->setTextColor(0x7BEF); // Light Gray
+    if (isEditingSetting) {
+        guiSprite->drawString("ENTER: Save  ESC: Cancel", 2, 114);
+    } else {
+        guiSprite->drawString("ESC: Exit  < >/ENTER", 2, 114);
+    }
+
+    guiSprite->setTextColor(TFT_WHITE);
+    guiSprite->setTextDatum(ML_DATUM);
+
+    // Settings Items
+    const int itemHeight = 16;
+    int startY = 24;
+
+    // We have 7 items now: Brightness, AutoSleep, Low Power, WiFi SSID, WiFi Pass, GCal URL, Sync Cal
+    int scrollOffset = 0;
+    if (selectedItem > 3) {
+        scrollOffset = (selectedItem - 3) * itemHeight;
+    }
+
+    const char* labels[] = {"Brightness", "AutoSleep", "Low Power", "WiFi SSID", "WiFi Pass", "GCal URL", "Sync Cal"};
+
+    for (int i = 0; i < 7; i++) {
+        int y = startY + (i * itemHeight) - scrollOffset;
+
+        if (y < 20 || y > 110) continue; // Skip drawing items outside the viewable area
+
+        if (i == selectedItem) {
+            guiSprite->fillRect(0, y - 8, 160, itemHeight, 0x3186); // Dark Gray
+            guiSprite->drawRect(0, y - 8, 160, itemHeight, TFT_ORANGE);
+            guiSprite->setTextColor(TFT_ORANGE);
+        } else {
+            guiSprite->setTextColor(TFT_WHITE);
+        }
+
+        guiSprite->drawString(labels[i], 5, y);
+
+        // Right-aligned values
+        guiSprite->setTextDatum(MR_DATUM);
+
+        char displayStr[128];
+        displayStr[0] = '\0';
+
+        if (i == 0) { // Brightness
+            snprintf(displayStr, sizeof(displayStr), "%d", brightness);
+        } else if (i == 1) { // AutoSleep
+            if (sleepTimeout == 0) {
+                snprintf(displayStr, sizeof(displayStr), "Never");
+            } else {
+                snprintf(displayStr, sizeof(displayStr), "%d min", sleepTimeout);
+            }
+        } else if (i == 2) { // Low Power
+            snprintf(displayStr, sizeof(displayStr), isLowPowerMode ? "ON" : "OFF");
+        } else if (i == 3) { // WiFi SSID
+            if (i == selectedItem && isEditingSetting) {
+                drawInputBox(70, y - 6, 85, 12, inputBuffer, cursorIdx, true);
+                displayStr[0] = '\0';
+            } else {
+                snprintf(displayStr, sizeof(displayStr), "%s", wifiSSID);
+            }
+        } else if (i == 4) { // WiFi Pass
+            if (i == selectedItem && isEditingSetting) {
+                drawInputBox(70, y - 6, 85, 12, inputBuffer, cursorIdx, true);
+                displayStr[0] = '\0';
+            } else {
+                int len = strlen(wifiPassword);
+                if (len > 0) {
+                    for(int p=0; p<len && p<8; p++) displayStr[p] = '*';
+                    displayStr[min(len, 8)] = '\0';
+                }
+            }
+        } else if (i == 5) { // GCal URL
+            if (i == selectedItem && isEditingSetting) {
+                drawInputBox(70, y - 6, 85, 12, inputBuffer, cursorIdx, true);
+                displayStr[0] = '\0';
+            } else {
+                snprintf(displayStr, sizeof(displayStr), "%s", gcalURL);
+            }
+        } else if (i == 6) { // Sync Calendar
+            snprintf(displayStr, sizeof(displayStr), "Press ENTER");
+        }
+
+        // Truncate if it's too long to fit on screen
+        if (strlen(displayStr) > 12) {
+            char trunc[16];
+            strncpy(trunc, displayStr, 10);
+            trunc[10] = '.'; trunc[11] = '.'; trunc[12] = '\0';
+            guiSprite->drawString(trunc, 155, y);
+        } else {
+            guiSprite->drawString(displayStr, 155, y);
+        }
+
+        guiSprite->setTextDatum(ML_DATUM);
+    }
+
+    pushDirtySprite(0, 0);
+}
+
+void DisplayManager::drawInputBox(int x, int y, int w, int h, const char* text, int cursorIdx, bool isActive) {
+    if (!guiSprite) return;
+    
+    guiSprite->fillRect(x, y, w, h, isActive ? TFT_WHITE : TFT_DARKGREY);
+    guiSprite->setTextColor(isActive ? TFT_BLACK : TFT_WHITE, isActive ? TFT_WHITE : TFT_DARKGREY);
+    
+    int maxVisible = (w - 8) / 6; // glyph width is 6
+    int textLen = strlen(text);
+    
+    int startIdx = 0;
+    if (cursorIdx >= maxVisible) {
+        startIdx = cursorIdx - maxVisible + 1;
+    }
+    
+    char displayBuf[128];
+    int toCopy = std::min(textLen - startIdx, maxVisible);
+    if (toCopy < 0) toCopy = 0;
+    strncpy(displayBuf, text + startIdx, toCopy);
+    displayBuf[toCopy] = '\0';
+    
+    guiSprite->setCursor(x + 4, y + 2);
+    guiSprite->print(displayBuf);
+    
+    // Draw cursor
+    if (isActive) {
+        int relCursorPos = cursorIdx - startIdx;
+        if (relCursorPos >= 0 && relCursorPos <= maxVisible) {
+            int cursorX = x + 4 + relCursorPos * 6;
+            if (cursorX < x + w - 2) {
+                guiSprite->drawFastVLine(cursorX, y + 2, h - 4, TFT_BLACK);
+                if (relCursorPos == (int)strlen(displayBuf)) {
+                    guiSprite->drawFastHLine(cursorX, y + h - 3, 5, TFT_BLACK);
+                }
+            }
+        }
+    }
+}
 

@@ -19,9 +19,13 @@ public:
     int offsetY = 0;
 
     void initBusesAndDisplays();
+    void drawBootLogo();
+    void drawEpaperLogo();
 
     void turnOnTFT();
     void turnOffTFT();
+    void checkTFTWakeDelay();
+    void setTFTBrightness(uint8_t brightness);
 
     void updateEpaperPartial(int viewIndex);
     void prepareEpaperViews(const TaskItem tasks[], uint32_t taskCount,
@@ -29,14 +33,15 @@ public:
                             uint16_t curYear, uint8_t curMonth, uint8_t curDay, uint8_t curHour);
 
     void drawActiveGUI(const TaskItem tasks[], const int filteredIndices[], uint32_t filteredCount, int selectedIndex, int topIndex = 0, int viewMode = 0);
-    void drawAddViewGUI(const char* currentInput, int activeField, bool hasDue, int y, int m, int d, int h, int min);
-    void drawEditViewGUI(const char* currentInput, int activeField, bool hasDue, int y, int m, int d, int h, int min);
-    void drawQuickAddGUI(const char* currentInput);
+    void drawAddViewGUI(const char* currentInput, int cursorIdx, int activeField, bool hasDue, int y, int m, int d, int h, int min);
+    void drawEditViewGUI(const char* currentInput, int cursorIdx, int activeField, bool hasDue, int y, int m, int d, int h, int min);
+    void drawQuickAddGUI(const char* currentInput, int cursorIdx);
+    void drawSettingsGUI(int selectedItem, uint8_t brightness, uint16_t sleepTimeout, const char* wifiSSID, const char* wifiPassword, const char* gcalURL, bool isEditingSetting, const char* inputBuffer, int cursorIdx, bool isLowPowerMode);
     void drawAlignGUI();
     void drawCalendarGUI(CalendarView view, int year, int month, int day, const CalendarEvent events[], uint32_t eventCount, int selectedEventIdx);
     void drawEventDetailGUI(const CalendarEvent& event, int scrollOffset = 0);
     void drawHelpGUI(SystemState fromState);
-    void drawAddEventGUI(const char* title, int hour, int duration, int activeField);
+    void drawAddEventGUI(const char* title, int cursorIdx, int hour, int duration, int activeField);
     void clearFullHardwareScreen();
     // Smoke test drawing path for diagnostics
     void drawSmokeTest();
@@ -46,6 +51,7 @@ public:
     void drawTestOverlay();
     // Direct color frame test (bypass sprite) to verify TFT path
     void drawDirectColorFrame(uint16_t color);
+    void drawSyncStatus(const char* status);
     // Simple sprite test - tiny sprite to verify sprite path works
     void drawActiveGUISimpleTest();
     uint32_t getEpaperViewCount() const { return epaperViewCount; }
@@ -65,6 +71,7 @@ private:
     GxEPD2_BW<GxEPD2_213_B74, GxEPD2_213_B74::HEIGHT> epd;
 
     bool tftOn;
+    unsigned long tftWakeTime = 0;
     EpaperViewItem epaperViews[EPAPER_VIEW_COUNT];
     uint32_t epaperViewCount;
 
@@ -75,4 +82,5 @@ private:
     bool fullRedrawPending;
 
     void drawEpaperView(int index);
+    void drawInputBox(int x, int y, int w, int h, const char* text, int cursorIdx, bool isActive);
 };
