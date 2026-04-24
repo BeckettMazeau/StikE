@@ -911,11 +911,27 @@ void DisplayManager::pushDirtySprite(int x, int y) {
     
     // We iterate row by row and compare hashes to find dirty regions.
     // To minimize SPI transaction overhead, we batch contiguous dirty rows.
+    int w_fast = w & ~7;
     for (int i = 0; i < h; i++) {
-        // DJB2-style hash for the row
+        // Optimized DJB2 hash utilizing 16-bit unrolling
+        // Note: Avoided 32-bit cast (w/ 2 loop) to prevent Undefined Behavior
+        // due to strict aliasing and potential unaligned hardware access faults.
         uint32_t hash = 5381;
         uint16_t* rowPtr = ptr + i * w;
-        for (int j = 0; j < w; j++) {
+        int j = 0;
+
+        // Unroll by 8 to reduce loop overhead
+        for (; j < w_fast; j += 8) {
+            hash = ((hash << 5) + hash) + rowPtr[j];
+            hash = ((hash << 5) + hash) + rowPtr[j+1];
+            hash = ((hash << 5) + hash) + rowPtr[j+2];
+            hash = ((hash << 5) + hash) + rowPtr[j+3];
+            hash = ((hash << 5) + hash) + rowPtr[j+4];
+            hash = ((hash << 5) + hash) + rowPtr[j+5];
+            hash = ((hash << 5) + hash) + rowPtr[j+6];
+            hash = ((hash << 5) + hash) + rowPtr[j+7];
+        }
+        for (; j < w; j++) {
             hash = ((hash << 5) + hash) + rowPtr[j];
         }
         
