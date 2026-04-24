@@ -4,6 +4,7 @@
 #include <LittleFS.h>
 #include <FS.h>
 #include "display_mgr.h"
+#include <algorithm>
 #include "state_types.h"
 #include "icons.h"
 
@@ -170,26 +171,6 @@ bool isWithin24Hours(const CalendarEvent& ev, uint16_t curYear, uint8_t curMonth
     return false;
 }
 
-// Issue 4: Word-boundary-aware string truncation for ePaper display.
-// Copies at most maxChars of src into dst (including NUL), breaking at a word
-// boundary if the string is longer than maxChars. Appends "." if truncated.
-// dst must be at least maxChars+2 bytes.
-void truncateAtWord(char* dst, const char* src, int maxChars) {
-    int srcLen = strlen(src);
-    if (srcLen <= maxChars) {
-        strncpy(dst, src, maxChars + 1);
-        dst[maxChars] = '\0';
-        return;
-    }
-    // Find the last space at or before maxChars-1 (leave 1 char for '.')
-    int cutAt = maxChars - 1;
-    for (int i = cutAt; i > 0; i--) {
-        if (src[i] == ' ') { cutAt = i; break; }
-    }
-    strncpy(dst, src, cutAt);
-    dst[cutAt] = '.';
-    dst[cutAt + 1] = '\0';
-}
 }
 
 
@@ -212,29 +193,13 @@ void DisplayManager::prepareEpaperViews(const TaskItem tasks[], uint32_t taskCou
     }
 
     // Sort eligibleEvents by time (soonest first)
-    for (uint32_t i = 0; i < eligibleEventCount; i++) {
-        for (uint32_t j = i + 1; j < eligibleEventCount; j++) {
-            bool swap = false;
-            if (eligibleEvents[i].year > eligibleEvents[j].year) swap = true;
-            else if (eligibleEvents[i].year == eligibleEvents[j].year) {
-                if (eligibleEvents[i].month > eligibleEvents[j].month) swap = true;
-                else if (eligibleEvents[i].month == eligibleEvents[j].month) {
-                    if (eligibleEvents[i].day > eligibleEvents[j].day) swap = true;
-                    else if (eligibleEvents[i].day == eligibleEvents[j].day) {
-                        if (eligibleEvents[i].hour > eligibleEvents[j].hour) swap = true;
-                        else if (eligibleEvents[i].hour == eligibleEvents[j].hour) {
-                            if (eligibleEvents[i].minute > eligibleEvents[j].minute) swap = true;
-                        }
-                    }
-                }
-            }
-            if (swap) {
-                CalendarEvent tmp = eligibleEvents[i];
-                eligibleEvents[i] = eligibleEvents[j];
-                eligibleEvents[j] = tmp;
-            }
-        }
-    }
+    std::sort(eligibleEvents, eligibleEvents + eligibleEventCount, [](const CalendarEvent& a, const CalendarEvent& b) {
+        if (a.year != b.year) return a.year < b.year;
+        if (a.month != b.month) return a.month < b.month;
+        if (a.day != b.day) return a.day < b.day;
+        if (a.hour != b.hour) return a.hour < b.hour;
+        return a.minute < b.minute;
+    });
 
     // 2. Take maximum 2 soonest events
     uint32_t eventsToTake = (eligibleEventCount > 2) ? 2 : eligibleEventCount;
@@ -1207,11 +1172,12 @@ void DisplayManager::drawEventDetailGUI(const CalendarEvent& event, int scrollOf
     curY += 10;
     // Wrap title if it exceeds maxChars (though it's only 24 chars, it might fit)
     {
-        int len = strlen(event.title);
+        int len = strnlen(event.title, sizeof(event.title));
         int pos = 0;
         while (pos < len || (pos == 0 && len == 0)) {
             char line[40];
             int take = (len - pos > maxChars) ? maxChars : (len - pos);
+            if (take > (int)sizeof(line) - 1) take = sizeof(line) - 1;
             strncpy(line, event.title + pos, take);
             line[take] = '\0';
             drawBodyText(4, curY, line, TFT_WHITE);
@@ -1235,11 +1201,12 @@ void DisplayManager::drawEventDetailGUI(const CalendarEvent& event, int scrollOf
     if (event.location[0]) {
         drawBodyText(4, curY, "Location:", TFT_YELLOW);
         curY += 10;
-        int len = strlen(event.location);
+        int len = strnlen(event.location, sizeof(event.location));
         int pos = 0;
         while (pos < len) {
             char line[40];
             int take = (len - pos > maxChars) ? maxChars : (len - pos);
+            if (take > (int)sizeof(line) - 1) take = sizeof(line) - 1;
             strncpy(line, event.location + pos, take);
             line[take] = '\0';
             drawBodyText(4, curY, line, TFT_WHITE);
@@ -1253,11 +1220,12 @@ void DisplayManager::drawEventDetailGUI(const CalendarEvent& event, int scrollOf
     if (event.notes[0]) {
         drawBodyText(4, curY, "Notes:", TFT_YELLOW);
         curY += 10;
-        int len = strlen(event.notes);
+        int len = strnlen(event.notes, sizeof(event.notes));
         int pos = 0;
         while (pos < len) {
             char line[64];
             int take = (len - pos > maxChars) ? maxChars : (len - pos);
+            if (take > (int)sizeof(line) - 1) take = sizeof(line) - 1;
             strncpy(line, event.notes + pos, take);
             line[take] = '\0';
             drawBodyText(4, curY, line, TFT_LIGHTGREY);
