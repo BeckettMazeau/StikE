@@ -1052,6 +1052,14 @@ void DisplayManager::drawCalendarGUI(CalendarView view, int year, int month, int
     int bodyH = H - HEADER_H - FOOTER_H - 4;
 
     if (view == CalendarView::MONTH) {
+        // Pre-calculate event counts for each day of the month to optimize traversal
+        uint8_t dailyEventCounts[32] = {0};
+        for (uint32_t e = 0; e < eventCount; e++) {
+            if (events[e].month == month && events[e].year == year && events[e].day >= 1 && events[e].day <= 31) {
+                dailyEventCounts[events[e].day]++;
+            }
+        }
+
         int cellW = W / 7;
         int cellH = bodyH / 5;
         int days = getDaysInMonth(year, month);
@@ -1062,10 +1070,7 @@ void DisplayManager::drawCalendarGUI(CalendarView view, int year, int month, int
             int y = bodyY + row * cellH;
             
             int dayNum = i + 1;
-            int dayEvents = 0;
-            for (uint32_t e = 0; e < eventCount; e++) {
-                if (events[e].day == dayNum && events[e].month == month && events[e].year == year) dayEvents++;
-            }
+            int dayEvents = dailyEventCounts[dayNum];
 
             if (dayNum == day) {
                 guiSprite->fillRect(x, y, cellW, cellH, TFT_WHITE);
