@@ -4,6 +4,7 @@
 #include <LittleFS.h>
 #include <FS.h>
 #include "display_mgr.h"
+#include <algorithm>
 #include "state_types.h"
 #include "icons.h"
 
@@ -192,29 +193,13 @@ void DisplayManager::prepareEpaperViews(const TaskItem tasks[], uint32_t taskCou
     }
 
     // Sort eligibleEvents by time (soonest first)
-    for (uint32_t i = 0; i < eligibleEventCount; i++) {
-        for (uint32_t j = i + 1; j < eligibleEventCount; j++) {
-            bool swap = false;
-            if (eligibleEvents[i].year > eligibleEvents[j].year) swap = true;
-            else if (eligibleEvents[i].year == eligibleEvents[j].year) {
-                if (eligibleEvents[i].month > eligibleEvents[j].month) swap = true;
-                else if (eligibleEvents[i].month == eligibleEvents[j].month) {
-                    if (eligibleEvents[i].day > eligibleEvents[j].day) swap = true;
-                    else if (eligibleEvents[i].day == eligibleEvents[j].day) {
-                        if (eligibleEvents[i].hour > eligibleEvents[j].hour) swap = true;
-                        else if (eligibleEvents[i].hour == eligibleEvents[j].hour) {
-                            if (eligibleEvents[i].minute > eligibleEvents[j].minute) swap = true;
-                        }
-                    }
-                }
-            }
-            if (swap) {
-                CalendarEvent tmp = eligibleEvents[i];
-                eligibleEvents[i] = eligibleEvents[j];
-                eligibleEvents[j] = tmp;
-            }
-        }
-    }
+    std::sort(eligibleEvents, eligibleEvents + eligibleEventCount, [](const CalendarEvent& a, const CalendarEvent& b) {
+        if (a.year != b.year) return a.year < b.year;
+        if (a.month != b.month) return a.month < b.month;
+        if (a.day != b.day) return a.day < b.day;
+        if (a.hour != b.hour) return a.hour < b.hour;
+        return a.minute < b.minute;
+    });
 
     // 2. Take maximum 2 soonest events
     uint32_t eventsToTake = (eligibleEventCount > 2) ? 2 : eligibleEventCount;
