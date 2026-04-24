@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <esp_sleep.h>
+#include <WiFi.h>
 #include <esp_log.h>
 #include <Preferences.h>
 #include <freertos/FreeRTOS.h>
@@ -10,6 +11,7 @@
 #include "state_types.h"
 #include "display_mgr.h"
 #include "keyboard_mgr.h"
+#include "power_mgr.h"
 
 // TEST_START: Systems Test
 #ifdef STike_SYSTEM_TEST
@@ -38,6 +40,19 @@ int taskListTopIndex = 0;  // Top of the visible scroll window for the task list
 TaskViewMode currentTaskView = TaskViewMode::ACTIVE;
 int filteredTaskIndices[MAX_TASKS];
 int filteredTaskCount = 0;
+
+// Global low power mode flag
+bool isLowPowerMode = false;
+
+// Toggle low power mode
+void setLowPowerMode(bool enable) {
+    isLowPowerMode = enable;
+    if (enable) {
+        setCpuFrequencyMhz(80);
+    } else {
+        setCpuFrequencyMhz(240);
+    }
+}
 
 void updateFilteredTasks() {
     filteredTaskCount = 0;
@@ -168,7 +183,7 @@ void keyboardTask(void* parameter) {
                 }
             }
         }
-        vTaskDelay(pdMS_TO_TICKS(10)); // 10ms polling interval
+        vTaskDelay(pdMS_TO_TICKS(isLowPowerMode ? 50 : 10)); // 10ms polling interval, 50ms in low power
     }
 }
 
@@ -1153,6 +1168,10 @@ void handleSleepState() {
 }
 
 void setup() {
+    // Disable unused radios to save significant power
+    WiFi.mode(WIFI_OFF);
+    btStop();
+
     // Give serial a moment to initialize before beginning
     delay(2000); 
     Serial.begin(115200);
@@ -1364,5 +1383,5 @@ void loop() {
         uiDirty = false;
     }
 
-    delay(50);
+    delay(isLowPowerMode ? 100 : 50);
 }
