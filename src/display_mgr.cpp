@@ -170,26 +170,6 @@ bool isWithin24Hours(const CalendarEvent& ev, uint16_t curYear, uint8_t curMonth
     return false;
 }
 
-// Issue 4: Word-boundary-aware string truncation for ePaper display.
-// Copies at most maxChars of src into dst (including NUL), breaking at a word
-// boundary if the string is longer than maxChars. Appends "." if truncated.
-// dst must be at least maxChars+2 bytes.
-void truncateAtWord(char* dst, const char* src, int maxChars) {
-    int srcLen = strlen(src);
-    if (srcLen <= maxChars) {
-        strncpy(dst, src, maxChars + 1);
-        dst[maxChars] = '\0';
-        return;
-    }
-    // Find the last space at or before maxChars-1 (leave 1 char for '.')
-    int cutAt = maxChars - 1;
-    for (int i = cutAt; i > 0; i--) {
-        if (src[i] == ' ') { cutAt = i; break; }
-    }
-    strncpy(dst, src, cutAt);
-    dst[cutAt] = '.';
-    dst[cutAt + 1] = '\0';
-}
 }
 
 
