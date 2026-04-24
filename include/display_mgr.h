@@ -22,6 +22,7 @@ public:
 
     void turnOnTFT();
     void turnOffTFT();
+    void checkTFTWakeDelay();
     void setTFTBrightness(uint8_t brightness);
 
     void updateEpaperPartial(int viewIndex);
@@ -67,6 +68,7 @@ private:
     GxEPD2_BW<GxEPD2_213_B74, GxEPD2_213_B74::HEIGHT> epd;
 
     bool tftOn;
+    unsigned long tftWakeTime = 0;
     EpaperViewItem epaperViews[EPAPER_VIEW_COUNT];
     uint32_t epaperViewCount;
 

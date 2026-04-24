@@ -131,8 +131,18 @@ void DisplayManager::turnOnTFT() {
     if (!tftOn) {
         // No more shared pin configuration needed - LCD_BL on GPIO 42 is dedicated
         tft.writecommand(ST7735_SLPOUT);
-        delay(120);  // Physical wake-up time for ST7735S
+        tftWakeTime = millis() + 120; // Physical wake-up time for ST7735S
         tftOn = true;
+    }
+}
+
+void DisplayManager::checkTFTWakeDelay() {
+    if (tftOn && tftWakeTime > 0) {
+        unsigned long now = millis();
+        if (now < tftWakeTime) {
+            delay(tftWakeTime - now);
+        }
+        tftWakeTime = 0; // Delay complete
     }
 }
 
@@ -575,6 +585,7 @@ void DisplayManager::drawTestOverlay() {
 
 // Direct hardware color fill test (bypassing the sprite pipeline)
 void DisplayManager::drawDirectColorFrame(uint16_t color) {
+    checkTFTWakeDelay();
     // This is a direct write to the TFT to verify the bus can render a frame
     if (!guiSprite) {
         tft.fillScreen(color);
@@ -858,6 +869,7 @@ void DisplayManager::drawQuickAddGUI(const char* currentInput) {
 }
 
 void DisplayManager::clearFullHardwareScreen() {
+    checkTFTWakeDelay();
     tft.fillScreen(TFT_BLACK);
     forceFullRedraw();
 }
@@ -867,6 +879,8 @@ void DisplayManager::forceFullRedraw() {
 }
 
 void DisplayManager::pushDirtySprite(int x, int y) {
+    checkTFTWakeDelay();
+
     if (!guiSprite) return;
     
     int w = guiSprite->width();
