@@ -13,6 +13,8 @@ public:
     DisplayManager();
     ~DisplayManager();
 
+    static int getDaysInMonth(int year, int month);
+
     int offsetX = 0;
     int offsetY = 0;
 
@@ -26,7 +28,7 @@ public:
                             const CalendarEvent events[], uint32_t eventCount,
                             uint16_t curYear, uint8_t curMonth, uint8_t curDay, uint8_t curHour);
 
-    void drawActiveGUI(const TaskItem tasks[], uint32_t taskCount, int selectedIndex, int topIndex = 0, int viewMode = 0);
+    void drawActiveGUI(const TaskItem tasks[], const int filteredIndices[], uint32_t filteredCount, int selectedIndex, int topIndex = 0, int viewMode = 0);
     void drawAddViewGUI(const char* currentInput, int activeField, bool hasDue, int y, int m, int d, int h, int min);
     void drawEditViewGUI(const char* currentInput, int activeField, bool hasDue, int y, int m, int d, int h, int min);
     void drawQuickAddGUI(const char* currentInput);

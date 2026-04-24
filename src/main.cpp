@@ -376,7 +376,7 @@ static void handleUIListEvent(const SystemEvent& event) {
             if (selectedTaskIndex < static_cast<int>(filteredTaskCount) - 1) {
                 selectedTaskIndex++;
                 uiDirty = true;
-                const int VISIBLE_ROWS = 9;
+                const int VISIBLE_ROWS = 7;
                 if (selectedTaskIndex >= taskListTopIndex + VISIBLE_ROWS) {
                     taskListTopIndex = selectedTaskIndex - VISIBLE_ROWS + 1;
                 }
@@ -796,7 +796,12 @@ static void handleUICalendarEvent(const SystemEvent& event) {
         case SystemEventType::EVENT_NAV_UP:
             if (currentCalendarView == CalendarView::MONTH) {
                 calDay -= 7;
-                if (calDay < 1) calDay = 1;
+                if (calDay < 1) {
+                    calMonth--;
+                    if (calMonth < 1) { calMonth = 12; calYear--; }
+                    int prevDays = DisplayManager::getDaysInMonth(calYear, calMonth);
+                    calDay = prevDays + calDay; 
+                }
             } else if (currentCalendarView == CalendarView::DAY) {
                 if (selectedEventIndex > 0) selectedEventIndex--;
             } else {
@@ -808,8 +813,14 @@ static void handleUICalendarEvent(const SystemEvent& event) {
 
         case SystemEventType::EVENT_NAV_DOWN:
             if (currentCalendarView == CalendarView::MONTH) {
+                int days = DisplayManager::getDaysInMonth(calYear, calMonth);
                 calDay += 7;
-                if (calDay > 31) calDay = 31;
+                if (calDay > days) {
+                    int extra = calDay - days;
+                    calMonth++;
+                    if (calMonth > 12) { calMonth = 1; calYear++; }
+                    calDay = extra;
+                }
             } else if (currentCalendarView == CalendarView::DAY) {
                 // Count events for this day
                 int dayCount = 0;
@@ -825,14 +836,33 @@ static void handleUICalendarEvent(const SystemEvent& event) {
             break;
 
         case SystemEventType::EVENT_NAV_LEFT:
-            calDay--;
-            if (calDay < 1) calDay = 1;
+            if (currentCalendarView == CalendarView::MONTH) {
+                calDay--;
+                if (calDay < 1) {
+                    calMonth--;
+                    if (calMonth < 1) { calMonth = 12; calYear--; }
+                    calDay = DisplayManager::getDaysInMonth(calYear, calMonth);
+                }
+            } else {
+                calDay--;
+                if (calDay < 1) calDay = 1;
+            }
             uiDirty = true;
             break;
 
         case SystemEventType::EVENT_NAV_RIGHT:
-            calDay++;
-            if (calDay > 31) calDay = 31;
+            if (currentCalendarView == CalendarView::MONTH) {
+                int days = DisplayManager::getDaysInMonth(calYear, calMonth);
+                calDay++;
+                if (calDay > days) {
+                    calMonth++;
+                    if (calMonth > 12) { calMonth = 1; calYear++; }
+                    calDay = 1;
+                }
+            } else {
+                calDay++;
+                if (calDay > 31) calDay = 31;
+            }
             uiDirty = true;
             break;
 
@@ -1290,14 +1320,9 @@ void loop() {
     // Only redraw when state has actually changed
     if (uiDirty) {
         switch (currentState) {
-            case SystemState::STATE_UI_LIST: {
-                TaskItem displayTasks[MAX_TASKS];
-                for (int i=0; i<filteredTaskCount; i++) {
-                    displayTasks[i] = tasks[filteredTaskIndices[i]];
-                }
-                displayMgr.drawActiveGUI(displayTasks, filteredTaskCount, selectedTaskIndex, taskListTopIndex, static_cast<int>(currentTaskView));
+            case SystemState::STATE_UI_LIST:
+                displayMgr.drawActiveGUI(tasks, filteredTaskIndices, filteredTaskCount, selectedTaskIndex, taskListTopIndex, static_cast<int>(currentTaskView));
                 break;
-            }
             case SystemState::STATE_UI_ADD_TASK:
                 displayMgr.drawAddViewGUI(inputBuffer, taskEditField, taskEditHasDue, taskEditYear, taskEditMonth, taskEditDay, taskEditHour, taskEditMinute);
                 break;

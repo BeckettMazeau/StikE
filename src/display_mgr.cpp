@@ -26,6 +26,15 @@ DisplayManager::~DisplayManager() {
     }
 }
 
+int DisplayManager::getDaysInMonth(int y, int m) {
+    if (m == 2) {
+        return ((y % 4 == 0 && y % 100 != 0) || (y % 400 == 0)) ? 29 : 28;
+    }
+    if (m == 4 || m == 6 || m == 9 || m == 11) return 30;
+    if (m < 1 || m > 12) return 31; // Safety
+    return 31;
+}
+
 void DisplayManager::initBusesAndDisplays() {
     // === ePaper: Complete ALL ePaper work before touching TFT ===
     // The TFT's HSPI init can disrupt the FSPI bus state on ESP32-S3,
@@ -438,7 +447,7 @@ bool DisplayManager::isAnimating() const {
     return abs(targetSelectionY - currentSelectionY) > 0.1f;
 }
 
-void DisplayManager::drawActiveGUI(const TaskItem tasks[], uint32_t taskCount, int selectedIndex, int topIndex, int viewMode) {
+void DisplayManager::drawActiveGUI(const TaskItem tasks[], const int filteredIndices[], uint32_t filteredCount, int selectedIndex, int topIndex, int viewMode) {
     if (!guiSprite) {
         Serial.println("[SYS_TEST] drawActiveGUI: guiSprite is null, bailing");
         return;
@@ -446,7 +455,7 @@ void DisplayManager::drawActiveGUI(const TaskItem tasks[], uint32_t taskCount, i
 
     const uint16_t headerStart = guiSprite->color565(0, 0, 140);
     const uint16_t headerEnd   = guiSprite->color565(0, 0, 60);
-    const bool listFull = (taskCount >= MAX_TASKS);
+    const bool listFull = (filteredCount >= MAX_TASKS);
     const int W = guiSprite->width();
     const int H = guiSprite->height();
 
@@ -456,10 +465,10 @@ void DisplayManager::drawActiveGUI(const TaskItem tasks[], uint32_t taskCount, i
     drawVGradient(guiSprite, 0, 0, W, HEADER_H, headerStart, headerEnd);
     guiSprite->setTextColor(TFT_WHITE);
     guiSprite->setCursor(4, 3);
-    if (taskCount > 0) {
+    if (filteredCount > 0) {
         char hdr[24];
         const char* modeStr = (viewMode == 0) ? "ACT" : ((viewMode == 1) ? "CMP" : "ALL");
-        snprintf(hdr, sizeof(hdr), "%s %u/%u", modeStr, (unsigned)(selectedIndex + 1), (unsigned)taskCount);
+        snprintf(hdr, sizeof(hdr), "%s %u/%u", modeStr, (unsigned)(selectedIndex + 1), (unsigned)filteredCount);
         guiSprite->print(hdr);
     } else {
         const char* modeStr = (viewMode == 0) ? "ACTIVE" : ((viewMode == 1) ? "COMPLETED" : "ALL");
@@ -473,7 +482,7 @@ void DisplayManager::drawActiveGUI(const TaskItem tasks[], uint32_t taskCount, i
         guiSprite->setCursor(W - 10, 3);
         guiSprite->print('^');
     }
-    bool moreBelow = (static_cast<int>(taskCount) > topIndex + MAX_LIST_LINES);
+    bool moreBelow = (static_cast<int>(filteredCount) > topIndex + MAX_LIST_LINES);
     if (moreBelow) {
         // More items below — draw in body area top-right to remain visible
         guiSprite->setTextColor(TFT_YELLOW, TFT_BLACK);
@@ -483,9 +492,10 @@ void DisplayManager::drawActiveGUI(const TaskItem tasks[], uint32_t taskCount, i
 
     // --- Body: render the scroll window [topIndex .. topIndex+MAX_LIST_LINES) ---
     int windowEnd = topIndex + MAX_LIST_LINES;
-    if (windowEnd > static_cast<int>(taskCount)) windowEnd = static_cast<int>(taskCount);
+    if (windowEnd > static_cast<int>(filteredCount)) windowEnd = static_cast<int>(filteredCount);
 
     for (int i = topIndex; i < windowEnd; ++i) {
+        int realIdx = filteredIndices[i];
         int row = i - topIndex;
         int y = HEADER_H + 2 + row * LINE_H;
         bool selected = (i == selectedIndex);
@@ -494,21 +504,17 @@ void DisplayManager::drawActiveGUI(const TaskItem tasks[], uint32_t taskCount, i
             targetSelectionY = y;
         }
 
-        // Build display line; title truncated to fit within the row width.
-        // With textSize=1, each char is 6px wide. Row width W minus checkbox prefix (4 chars = 24px)
-        // and optional due-date suffix (14 chars = 84px) leaves ~8 chars for title with due,
-        // or 24 chars without. We format conservatively.
         char line[40];
-        if (tasks[i].hasDueDate) {
+        if (tasks[realIdx].hasDueDate) {
             snprintf(line, sizeof(line), "[%c] %.10s %02d/%02d %02d:%02d",
-                     tasks[i].isCompleted ? 'x' : ' ',
-                     tasks[i].title,
-                     tasks[i].dueMonth, tasks[i].dueDay,
-                     tasks[i].dueHour, tasks[i].dueMinute);
+                     tasks[realIdx].isCompleted ? 'x' : ' ',
+                     tasks[realIdx].title,
+                     tasks[realIdx].dueMonth, tasks[realIdx].dueDay,
+                     tasks[realIdx].dueHour, tasks[realIdx].dueMinute);
         } else {
             snprintf(line, sizeof(line), "[%c] %.24s",
-                     tasks[i].isCompleted ? 'x' : ' ',
-                     tasks[i].title);
+                     tasks[realIdx].isCompleted ? 'x' : ' ',
+                     tasks[realIdx].title);
         }
 
         guiSprite->setCursor(4, y);
@@ -517,9 +523,8 @@ void DisplayManager::drawActiveGUI(const TaskItem tasks[], uint32_t taskCount, i
 
     // Draw Smooth Selection Bar
     if (selectedIndex >= 0 && selectedIndex >= topIndex && selectedIndex < windowEnd) {
+        int realIdx = filteredIndices[selectedIndex];
         // Use currentSelectionY for the sliding effect
-        // We draw it WITH transparency if possible, or just a solid rect behind text
-        // To make it look "premium", let's use a subtle gradient for the bar too
         uint16_t barStart = TFT_WHITE;
         uint16_t barEnd = guiSprite->color565(200, 200, 255);
         drawVGradient(guiSprite, 0, (int)currentSelectionY - 1, W - 12, LINE_H, barStart, barEnd);
@@ -529,23 +534,23 @@ void DisplayManager::drawActiveGUI(const TaskItem tasks[], uint32_t taskCount, i
         int y = HEADER_H + 2 + row * LINE_H;
         
         char line[40];
-        if (tasks[selectedIndex].hasDueDate) {
+        if (tasks[realIdx].hasDueDate) {
             snprintf(line, sizeof(line), "[%c] %.10s %02d/%02d %02d:%02d",
-                     tasks[selectedIndex].isCompleted ? 'x' : ' ',
-                     tasks[selectedIndex].title,
-                     tasks[selectedIndex].dueMonth, tasks[selectedIndex].dueDay,
-                     tasks[selectedIndex].dueHour, tasks[selectedIndex].dueMinute);
+                     tasks[realIdx].isCompleted ? 'x' : ' ',
+                     tasks[realIdx].title,
+                     tasks[realIdx].dueMonth, tasks[realIdx].dueDay,
+                     tasks[realIdx].dueHour, tasks[realIdx].dueMinute);
         } else {
             snprintf(line, sizeof(line), "[%c] %.24s",
-                     tasks[selectedIndex].isCompleted ? 'x' : ' ',
-                     tasks[selectedIndex].title);
+                     tasks[realIdx].isCompleted ? 'x' : ' ',
+                     tasks[realIdx].title);
         }
         guiSprite->setTextColor(TFT_BLACK);
         guiSprite->setCursor(4, y);
         guiSprite->print(line);
     }
 
-    if (taskCount == 0) {
+    if (filteredCount == 0) {
         guiSprite->setTextColor(TFT_LIGHTGREY, TFT_BLACK);
         guiSprite->setCursor(4, HEADER_H + 8);
         guiSprite->print("No tasks – press N");
@@ -565,7 +570,7 @@ void DisplayManager::drawActiveGUI(const TaskItem tasks[], uint32_t taskCount, i
     }
 
     pushDirtySprite(offsetX, offsetY);
-    Serial.printf("[GUI] drawActiveGUI: top=%d sel=%d count=%u\n", topIndex, selectedIndex, taskCount);
+    Serial.printf("[GUI] drawActiveGUI: top=%d sel=%d count=%u\n", topIndex, selectedIndex, filteredCount);
 }
 
 void DisplayManager::drawSmokeTest() {
@@ -1047,7 +1052,8 @@ void DisplayManager::drawCalendarGUI(CalendarView view, int year, int month, int
     if (view == CalendarView::MONTH) {
         int cellW = W / 7;
         int cellH = bodyH / 5;
-        for (int i = 0; i < 31; i++) {
+        int days = getDaysInMonth(year, month);
+        for (int i = 0; i < days; i++) {
             int row = i / 7;
             int col = i % 7;
             int x = col * cellW;
@@ -1056,7 +1062,7 @@ void DisplayManager::drawCalendarGUI(CalendarView view, int year, int month, int
             int dayNum = i + 1;
             int dayEvents = 0;
             for (uint32_t e = 0; e < eventCount; e++) {
-                if (events[e].day == dayNum && events[e].month == month) dayEvents++;
+                if (events[e].day == dayNum && events[e].month == month && events[e].year == year) dayEvents++;
             }
 
             if (dayNum == day) {
@@ -1088,7 +1094,7 @@ void DisplayManager::drawCalendarGUI(CalendarView view, int year, int month, int
         }
         // Draw all events for the week (placeholder: just show this month's events on their day)
         for (uint32_t i = 0; i < eventCount; i++) {
-            if (events[i].month == month) {
+            if (events[i].month == month && events[i].year == year) {
                 int dayOfWeek = (events[i].day - 1) % 7;
                 int x = dayOfWeek * colW;
                 int y = bodyY + (events[i].hour * bodyH / 24);
