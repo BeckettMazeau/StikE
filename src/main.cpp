@@ -202,6 +202,7 @@ void saveTasks() {
     // Save settings
     prefs.putUChar("brightness", tftBrightness);
     prefs.putUShort("autoSleep", autoSleepMinutes);
+    prefs.putBool("lowPower", isLowPowerMode);
     
     prefs.end();
     LOG_PRINTLN("[NVS] Tasks and settings saved as blob");
@@ -224,6 +225,8 @@ void loadTasks() {
     // Load Settings
     tftBrightness = prefs.getUChar("brightness", 255);
     autoSleepMinutes = prefs.getUShort("autoSleep", 5);
+    isLowPowerMode = prefs.getBool("lowPower", false);
+    setLowPowerMode(isLowPowerMode);
     displayMgr.setTFTBrightness(tftBrightness);
 
     if (taskCount > MAX_TASKS) taskCount = MAX_TASKS;
@@ -1136,7 +1139,7 @@ static void handleUISettingsEvent(const SystemEvent& event) {
             break;
 
         case SystemEventType::EVENT_NAV_DOWN:
-            if (settingsSelectedIndex < 1) { // We have 2 settings: 0=Brightness, 1=AutoSleep
+            if (settingsSelectedIndex < 2) { // We have 3 settings: 0=Brightness, 1=AutoSleep, 2=LowPower
                 settingsSelectedIndex++;
                 uiDirty = true;
             }
@@ -1151,6 +1154,10 @@ static void handleUISettingsEvent(const SystemEvent& event) {
             } else if (settingsSelectedIndex == 1) { // AutoSleep
                 if (autoSleepMinutes > 0) autoSleepMinutes--;
                 uiDirty = true;
+            } else if (settingsSelectedIndex == 2) { // LowPower
+                isLowPowerMode = false;
+                setLowPowerMode(isLowPowerMode);
+                uiDirty = true;
             }
             break;
 
@@ -1162,6 +1169,10 @@ static void handleUISettingsEvent(const SystemEvent& event) {
                 uiDirty = true;
             } else if (settingsSelectedIndex == 1) { // AutoSleep
                 if (autoSleepMinutes < 60) autoSleepMinutes++;
+                uiDirty = true;
+            } else if (settingsSelectedIndex == 2) { // LowPower
+                isLowPowerMode = true;
+                setLowPowerMode(isLowPowerMode);
                 uiDirty = true;
             }
             break;
@@ -1491,7 +1502,7 @@ void loop() {
                 displayMgr.drawQuickAddGUI(inputBuffer);
                 break;
             case SystemState::STATE_UI_SETTINGS:
-                displayMgr.drawSettingsGUI(settingsSelectedIndex, tftBrightness, autoSleepMinutes);
+                displayMgr.drawSettingsGUI(settingsSelectedIndex, tftBrightness, autoSleepMinutes, isLowPowerMode);
                 break;
             default:
                 break;
