@@ -214,6 +214,7 @@ void saveTasks() {
     // Save settings
     prefs.putUChar("brightness", tftBrightness);
     prefs.putUShort("autoSleep", autoSleepMinutes);
+    prefs.putBool("lowPower", isLowPowerMode);
     
     prefs.end();
     LOG_PRINTLN("[NVS] Tasks and settings saved as blob");
@@ -236,6 +237,8 @@ void loadTasks() {
     // Load Settings
     tftBrightness = prefs.getUChar("brightness", 255);
     autoSleepMinutes = prefs.getUShort("autoSleep", 5);
+    isLowPowerMode = prefs.getBool("lowPower", false);
+    setLowPowerMode(isLowPowerMode);
     displayMgr.setTFTBrightness(tftBrightness);
 
     if (taskCount > MAX_TASKS) taskCount = MAX_TASKS;
@@ -374,11 +377,13 @@ void parseNaturalLanguageTime(const char* title, int& hour) {
     
     if (ptr == endPtr) return; // No number found
     
-    // Check for am/pm
+    // Check for am/pm with explicit bounds check
     bool isPm = false;
     bool isAm = false;
-    if (strncasecmp(endPtr, "pm", 2) == 0) isPm = true;
-    else if (strncasecmp(endPtr, "am", 2) == 0) isAm = true;
+    if (endPtr[0] != '\0' && endPtr[1] != '\0') {
+        if (strncasecmp(endPtr, "pm", 2) == 0) isPm = true;
+        else if (strncasecmp(endPtr, "am", 2) == 0) isAm = true;
+    }
     
     if (isPm && val < 12) val += 12;
     else if (isAm && val == 12) val = 0;
@@ -1246,13 +1251,13 @@ static void handleUISettingsEvent(const SystemEvent& event) {
                 break;
             case SystemEventType::EVENT_SELECT:
                 // Save from inputBuffer to appropriate variable
-                if (settingsSelectedIndex == 2) {
+                if (settingsSelectedIndex == 3) {
                     strncpy(wifiSSID, inputBuffer, INPUT_BUFFER_SIZE);
                     wifiSSID[INPUT_BUFFER_SIZE - 1] = '\0';
-                } else if (settingsSelectedIndex == 3) {
+                } else if (settingsSelectedIndex == 4) {
                     strncpy(wifiPassword, inputBuffer, INPUT_BUFFER_SIZE);
                     wifiPassword[INPUT_BUFFER_SIZE - 1] = '\0';
-                } else if (settingsSelectedIndex == 4) {
+                } else if (settingsSelectedIndex == 5) {
                     strncpy(gcalURL, inputBuffer, INPUT_BUFFER_SIZE);
                     gcalURL[INPUT_BUFFER_SIZE - 1] = '\0';
                 }
@@ -1294,7 +1299,7 @@ static void handleUISettingsEvent(const SystemEvent& event) {
             break;
 
         case SystemEventType::EVENT_NAV_DOWN:
-            if (settingsSelectedIndex < 5) { // 6 settings
+            if (settingsSelectedIndex < 6) { // We have 7 settings
                 settingsSelectedIndex++;
                 uiDirty = true;
             }
@@ -1309,6 +1314,10 @@ static void handleUISettingsEvent(const SystemEvent& event) {
             } else if (settingsSelectedIndex == 1) { // AutoSleep
                 if (autoSleepMinutes > 0) autoSleepMinutes--;
                 uiDirty = true;
+            } else if (settingsSelectedIndex == 2) { // LowPower
+                isLowPowerMode = false;
+                setLowPowerMode(isLowPowerMode);
+                uiDirty = true;
             }
             break;
 
@@ -1321,22 +1330,26 @@ static void handleUISettingsEvent(const SystemEvent& event) {
             } else if (settingsSelectedIndex == 1) { // AutoSleep
                 if (autoSleepMinutes < 60) autoSleepMinutes++;
                 uiDirty = true;
+            } else if (settingsSelectedIndex == 2) { // LowPower
+                isLowPowerMode = true;
+                setLowPowerMode(isLowPowerMode);
+                uiDirty = true;
             }
             break;
 
         case SystemEventType::EVENT_SELECT:
-            if (settingsSelectedIndex == 5) {
+            if (settingsSelectedIndex == 6) {
                 syncGoogleCalendar();
                 uiDirty = true;
-            } else if (settingsSelectedIndex >= 2 && settingsSelectedIndex <= 4) {
+            } else if (settingsSelectedIndex >= 3 && settingsSelectedIndex <= 5) {
                 // Enter edit mode
                 isEditingSetting = true;
                 inputBufferLen = 0;
-                if (settingsSelectedIndex == 2) {
+                if (settingsSelectedIndex == 3) {
                     strncpy(inputBuffer, wifiSSID, INPUT_BUFFER_SIZE);
-                } else if (settingsSelectedIndex == 3) {
-                    strncpy(inputBuffer, wifiPassword, INPUT_BUFFER_SIZE);
                 } else if (settingsSelectedIndex == 4) {
+                    strncpy(inputBuffer, wifiPassword, INPUT_BUFFER_SIZE);
+                } else if (settingsSelectedIndex == 5) {
                     strncpy(inputBuffer, gcalURL, INPUT_BUFFER_SIZE);
                 }
                 inputBufferLen = strlen(inputBuffer);
@@ -1506,12 +1519,6 @@ void setup() {
     Serial.println("[SYS_TEST] Triggering full-red screen diagnostic");
     displayMgr.drawTestFullRed();
 #endif
-
-// Overlay diagnostic to verify end-to-end render path (cross on screen)
-//#ifdef STike_SYSTEM_TEST
-//    Serial.println("[SYS_TEST] Triggering diagnostic overlay");
-//    displayMgr.drawTestOverlay();
-//#endif
 
 // Direct diagnostic path: drawMagenta directly bypassing the sprite to confirm TFT path
 #ifdef STike_SYSTEM_TEST
@@ -1685,6 +1692,9 @@ void loop() {
                 break;
             case SystemState::STATE_UI_QUICK_ADD:
                 displayMgr.drawQuickAddGUI(inputBuffer);
+                break;
+            case SystemState::STATE_UI_SETTINGS:
+                displayMgr.drawSettingsGUI(settingsSelectedIndex, tftBrightness, autoSleepMinutes, wifiSSID, wifiPassword, gcalURL, isEditingSetting, inputBuffer, isLowPowerMode);
                 break;
             default:
                 break;

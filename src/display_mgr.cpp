@@ -73,7 +73,7 @@ void DisplayManager::initBusesAndDisplays() {
     // 4. Initialize TFT and backlight
     Serial.println("[DisplayMgr] Init TFT...");
     pinMode(Pins::LCD_BL, OUTPUT);
-    digitalWrite(Pins::LCD_BL, HIGH);
+    analogWrite(Pins::LCD_BL, 255);
     
     tft.init();
     tft.setRotation(1);
@@ -138,6 +138,8 @@ void DisplayManager::turnOnTFT() {
 void DisplayManager::turnOffTFT() {
     if (tftOn) {
         tft.writecommand(ST7735_SLPIN);
+        // Explicitly switch to GPIO mode and pull to GND
+        pinMode(Pins::LCD_BL, OUTPUT);
         digitalWrite(Pins::LCD_BL, LOW);
         tftOn = false;
     }
@@ -1050,6 +1052,14 @@ void DisplayManager::drawCalendarGUI(CalendarView view, int year, int month, int
     int bodyH = H - HEADER_H - FOOTER_H - 4;
 
     if (view == CalendarView::MONTH) {
+        // Pre-calculate event counts for each day of the month to optimize traversal
+        uint8_t dailyEventCounts[32] = {0};
+        for (uint32_t e = 0; e < eventCount; e++) {
+            if (events[e].month == month && events[e].year == year && events[e].day >= 1 && events[e].day <= 31) {
+                dailyEventCounts[events[e].day]++;
+            }
+        }
+
         int cellW = W / 7;
         int cellH = bodyH / 5;
         int days = getDaysInMonth(year, month);
@@ -1060,10 +1070,7 @@ void DisplayManager::drawCalendarGUI(CalendarView view, int year, int month, int
             int y = bodyY + row * cellH;
             
             int dayNum = i + 1;
-            int dayEvents = 0;
-            for (uint32_t e = 0; e < eventCount; e++) {
-                if (events[e].day == dayNum && events[e].month == month && events[e].year == year) dayEvents++;
-            }
+            int dayEvents = dailyEventCounts[dayNum];
 
             if (dayNum == day) {
                 guiSprite->fillRect(x, y, cellW, cellH, TFT_WHITE);
@@ -1413,10 +1420,15 @@ void DisplayManager::drawAddEventGUI(const char* title, int hour, int duration, 
 
 
 void DisplayManager::setTFTBrightness(uint8_t brightness) {
-    analogWrite(Pins::LCD_BL, brightness);
+    if (brightness == 0) {
+        pinMode(Pins::LCD_BL, OUTPUT);
+        digitalWrite(Pins::LCD_BL, LOW);
+    } else {
+        analogWrite(Pins::LCD_BL, brightness);
+    }
 }
 
-void DisplayManager::drawSettingsGUI(int selectedItem, uint8_t brightness, uint16_t sleepTimeout, const char* wifiSSID, const char* wifiPassword, const char* gcalURL, bool isEditingSetting, const char* inputBuffer) {
+void DisplayManager::drawSettingsGUI(int selectedItem, uint8_t brightness, uint16_t sleepTimeout, const char* wifiSSID, const char* wifiPassword, const char* gcalURL, bool isEditingSetting, const char* inputBuffer, bool isLowPowerMode) {
     if (!tftOn) return;
 
     guiSprite->fillSprite(TFT_BLACK);
@@ -1442,15 +1454,15 @@ void DisplayManager::drawSettingsGUI(int selectedItem, uint8_t brightness, uint1
     const int itemHeight = 16;
     int startY = 24;
 
-    // We have 6 items
+    // We have 7 items now: Brightness, AutoSleep, Low Power, WiFi SSID, WiFi Pass, GCal URL, Sync Cal
     int scrollOffset = 0;
     if (selectedItem > 3) {
         scrollOffset = (selectedItem - 3) * itemHeight;
     }
 
-    const char* labels[] = {"Brightness", "AutoSleep", "WiFi SSID", "WiFi Pass", "GCal URL", "Sync Cal"};
+    const char* labels[] = {"Brightness", "AutoSleep", "Low Power", "WiFi SSID", "WiFi Pass", "GCal URL", "Sync Cal"};
 
-    for (int i = 0; i < 6; i++) {
+    for (int i = 0; i < 7; i++) {
         int y = startY + (i * itemHeight) - scrollOffset;
 
         if (y < 20 || y > 110) continue; // Skip drawing items outside the viewable area
@@ -1474,14 +1486,20 @@ void DisplayManager::drawSettingsGUI(int selectedItem, uint8_t brightness, uint1
         if (i == 0) { // Brightness
             snprintf(displayStr, sizeof(displayStr), "%d", brightness);
         } else if (i == 1) { // AutoSleep
-            snprintf(displayStr, sizeof(displayStr), "%d min", sleepTimeout);
-        } else if (i == 2) { // WiFi SSID
+            if (sleepTimeout == 0) {
+                snprintf(displayStr, sizeof(displayStr), "Never");
+            } else {
+                snprintf(displayStr, sizeof(displayStr), "%d min", sleepTimeout);
+            }
+        } else if (i == 2) { // Low Power
+            snprintf(displayStr, sizeof(displayStr), isLowPowerMode ? "ON" : "OFF");
+        } else if (i == 3) { // WiFi SSID
             if (i == selectedItem && isEditingSetting) {
                 snprintf(displayStr, sizeof(displayStr), "%s_", inputBuffer);
             } else {
                 snprintf(displayStr, sizeof(displayStr), "%s", wifiSSID);
             }
-        } else if (i == 3) { // WiFi Pass
+        } else if (i == 4) { // WiFi Pass
             if (i == selectedItem && isEditingSetting) {
                 snprintf(displayStr, sizeof(displayStr), "%s_", inputBuffer);
             } else {
@@ -1491,13 +1509,13 @@ void DisplayManager::drawSettingsGUI(int selectedItem, uint8_t brightness, uint1
                     displayStr[min(len, 8)] = '\0';
                 }
             }
-        } else if (i == 4) { // GCal URL
+        } else if (i == 5) { // GCal URL
             if (i == selectedItem && isEditingSetting) {
                 snprintf(displayStr, sizeof(displayStr), "%s_", inputBuffer);
             } else {
                 snprintf(displayStr, sizeof(displayStr), "%s", gcalURL);
             }
-        } else if (i == 5) { // Sync Calendar
+        } else if (i == 6) { // Sync Calendar
             snprintf(displayStr, sizeof(displayStr), "Press ENTER");
         }
 
