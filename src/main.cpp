@@ -1340,12 +1340,6 @@ void setup() {
     displayMgr.drawTestFullRed();
 #endif
 
-// Overlay diagnostic to verify end-to-end render path (cross on screen)
-//#ifdef STike_SYSTEM_TEST
-//    Serial.println("[SYS_TEST] Triggering diagnostic overlay");
-//    displayMgr.drawTestOverlay();
-//#endif
-
 // Direct diagnostic path: drawMagenta directly bypassing the sprite to confirm TFT path
 #ifdef STike_SYSTEM_TEST
     Serial.println("[SYS_TEST] Triggering direct color frame (MAGENTA) bypass sprite");
