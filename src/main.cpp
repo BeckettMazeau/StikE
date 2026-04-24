@@ -3,17 +3,15 @@
 #include <WiFi.h>
 #include <esp_log.h>
 #include <Preferences.h>
+#include <WiFi.h>
 #include <freertos/FreeRTOS.h>
-#include <freertos/task.h>
 #include <freertos/queue.h>
-
-#include "pins.h"
-#include "state_types.h"
+#include <freertos/task.h>
 #include "display_mgr.h"
 #include "keyboard_mgr.h"
 #include "power_mgr.h"
-
-#include <WiFi.h>
+#include "pins.h"
+#include "state_types.h"
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 
@@ -41,7 +39,7 @@ SystemState previousState = SystemState::STATE_UI_LIST;
 TaskItem tasks[MAX_TASKS];
 uint32_t taskCount = 0;
 int selectedTaskIndex = -1;
-int taskListTopIndex = 0;  // Top of the visible scroll window for the task list
+int taskListTopIndex = 0; // Top of the visible scroll window for the task list
 TaskViewMode currentTaskView = TaskViewMode::ACTIVE;
 int filteredTaskIndices[MAX_TASKS];
 int filteredTaskCount = 0;
@@ -60,12 +58,14 @@ void setLowPowerMode(bool enable) {
 }
 
 void updateFilteredTasks() {
-    filteredTaskCount = 0;
-    for (uint32_t i = 0; i < taskCount; i++) {
-        if (currentTaskView == TaskViewMode::ACTIVE && tasks[i].isCompleted) continue;
-        if (currentTaskView == TaskViewMode::COMPLETED && !tasks[i].isCompleted) continue;
-        filteredTaskIndices[filteredTaskCount++] = i;
-    }
+  filteredTaskCount = 0;
+  for (uint32_t i = 0; i < taskCount; i++) {
+    if (currentTaskView == TaskViewMode::ACTIVE && tasks[i].isCompleted)
+      continue;
+    if (currentTaskView == TaskViewMode::COMPLETED && !tasks[i].isCompleted)
+      continue;
+    filteredTaskIndices[filteredTaskCount++] = i;
+  }
 }
 // Add-task view input buffer
 char inputBuffer[INPUT_BUFFER_SIZE];
@@ -87,7 +87,8 @@ int eventEditDuration = 60;
 int eventEditField = 0; // 0: Title, 1: Hour, 2: Duration
 
 // Task add/edit state
-int taskEditField = 0; // 0: Title, 1: Has Due Date, 2: Day, 3: Month, 4: Year, 5: Hour, 6: Minute
+int taskEditField = 0; // 0: Title, 1: Has Due Date, 2: Day, 3: Month, 4: Year,
+                       // 5: Hour, 6: Minute
 bool taskEditHasDue = false;
 int taskEditYear = 2026;
 int taskEditMonth = 4;
@@ -115,20 +116,33 @@ uint8_t tftBrightness = 255;
 uint16_t autoSleepMinutes = 5;
 uint32_t lastInputTime = 0;
 // Sleep-safe logging macros
-#define LOG_PRINT(...)   do { if (Serial) Serial.print(__VA_ARGS__); } while(0)
-#define LOG_PRINTLN(...) do { if (Serial) Serial.println(__VA_ARGS__); } while(0)
-#define LOG_PRINTF(...)  do { if (Serial) { char _buf[256]; snprintf(_buf, sizeof(_buf), __VA_ARGS__); Serial.print(_buf); } } while(0)
+#define LOG_PRINT(...)                                                         \
+  do {                                                                         \
+    if (Serial)                                                                \
+      Serial.print(__VA_ARGS__);                                               \
+  } while (0)
+#define LOG_PRINTLN(...)                                                       \
+  do {                                                                         \
+    if (Serial)                                                                \
+      Serial.println(__VA_ARGS__);                                             \
+  } while (0)
+#define LOG_PRINTF(...)                                                        \
+  do {                                                                         \
+    if (Serial) {                                                              \
+      char _buf[256];                                                          \
+      snprintf(_buf, sizeof(_buf), __VA_ARGS__);                               \
+      Serial.print(_buf);                                                      \
+    }                                                                          \
+  } while (0)
 
-void IRAM_ATTR wakeButtonISR() {
-    wakeRequested = true;
-}
+void IRAM_ATTR wakeButtonISR() { wakeRequested = true; }
 
 // Send system event to queue
 void sendSystemEvent(SystemEventType type, int param = 0) {
-    if (systemEventQueue) {
-        SystemEvent event = {type, param};
-        xQueueSendFromISR(systemEventQueue, &event, nullptr);
-    }
+  if (systemEventQueue) {
+    SystemEvent event = {type, param};
+    xQueueSendFromISR(systemEventQueue, &event, nullptr);
+  }
 }
 
 // Keyboard reader task - runs on core 0
@@ -201,6 +215,9 @@ void keyboardTask(void* parameter) {
         }
         vTaskDelay(pdMS_TO_TICKS(isLowPowerMode ? 50 : 10)); // 10ms polling interval, 50ms in low power
     }
+    vTaskDelay(pdMS_TO_TICKS(
+        isLowPowerMode ? 50 : 10)); // 10ms polling interval, 50ms in low power
+  }
 }
 
 // Save tasks to NVS
@@ -224,9 +241,11 @@ void saveTasks() {
 void removeLinkedEvent(uint32_t taskId);
 
 void cleanupOldCompletedTasks() {
-    // No-op: TaskItem does not store a completion date, so age-based cleanup
-    // is not possible without extending the struct. Reserved for future use.
-    (void)calYear; (void)calMonth; (void)calDay;
+  // No-op: TaskItem does not store a completion date, so age-based cleanup
+  // is not possible without extending the struct. Reserved for future use.
+  (void)calYear;
+  (void)calMonth;
+  (void)calDay;
 }
 
 // Load tasks from NVS
@@ -279,76 +298,89 @@ void loadTasks() {
             tasks[i].dueMinute = prefs.getUChar(key, 0);
         }
     }
-    
-    prefs.end();
-    cleanupOldCompletedTasks();
+  }
+
+  prefs.end();
+  cleanupOldCompletedTasks();
 }
 
 // Add demo tasks (used when no saved tasks exist)
 void addDemoTasks() {
-    tasks[0] = TaskItem("Review PR #42", false, 0);
-    tasks[1] = TaskItem("Update docs", true, 0);
-    tasks[2] = TaskItem("Fix bug in display", false, 0);
-    tasks[3] = TaskItem("Team standup", true, 0);
-    taskCount = 4;
+  tasks[0] = TaskItem("Review PR #42", false, 0);
+  tasks[1] = TaskItem("Update docs", true, 0);
+  tasks[2] = TaskItem("Fix bug in display", false, 0);
+  tasks[3] = TaskItem("Team standup", true, 0);
+  taskCount = 4;
 }
 
 // Add demo events
 void addDemoEvents() {
-    calendarEvents[0] = CalendarEvent("Breakfast", 2000, 1, 1, 8, 0, 30, "Eat healthy!", "Kitchen");
-    calendarEvents[1] = CalendarEvent("Coding StikE", 2000, 1, 1, 9, 30, 120, "Work on UI", "Office");
-    calendarEvents[2] = CalendarEvent("Lunch", 2000, 1, 1, 12, 0, 60, "Meeting with team", "Cafe");
-    calendarEvents[3] = CalendarEvent("Workout", 2000, 1, 1, 17, 0, 45, "Leg day", "Gym");
-    calendarEvents[4] = CalendarEvent("Dinner", 2000, 1, 1, 19, 0, 60, "Relax", "Home");
-    calendarEvents[5] = CalendarEvent("Planning", 2000, 1, 2, 10, 0, 90, "Plan next week", "Office");
-    calendarEvents[6] = CalendarEvent("Call Alice", 2000, 1, 3, 14, 0, 30, "Discuss project", "Phone");
-    calendarEvents[7] = CalendarEvent("Gym", 2000, 1, 4, 7, 0, 60, "Cardio", "Gym");
-    calendarEvents[8] = CalendarEvent("Weekly Sync", 2000, 1, 5, 11, 0, 60, "All hands", "Conference Room");
-    calendarEventCount = 9;
+  calendarEvents[0] = CalendarEvent("Breakfast", 2000, 1, 1, 8, 0, 30,
+                                    "Eat healthy!", "Kitchen");
+  calendarEvents[1] = CalendarEvent("Coding StikE", 2000, 1, 1, 9, 30, 120,
+                                    "Work on UI", "Office");
+  calendarEvents[2] = CalendarEvent("Lunch", 2000, 1, 1, 12, 0, 60,
+                                    "Meeting with team", "Cafe");
+  calendarEvents[3] =
+      CalendarEvent("Workout", 2000, 1, 1, 17, 0, 45, "Leg day", "Gym");
+  calendarEvents[4] =
+      CalendarEvent("Dinner", 2000, 1, 1, 19, 0, 60, "Relax", "Home");
+  calendarEvents[5] = CalendarEvent("Planning", 2000, 1, 2, 10, 0, 90,
+                                    "Plan next week", "Office");
+  calendarEvents[6] = CalendarEvent("Call Alice", 2000, 1, 3, 14, 0, 30,
+                                    "Discuss project", "Phone");
+  calendarEvents[7] =
+      CalendarEvent("Gym", 2000, 1, 4, 7, 0, 60, "Cardio", "Gym");
+  calendarEvents[8] = CalendarEvent("Weekly Sync", 2000, 1, 5, 11, 0, 60,
+                                    "All hands", "Conference Room");
+  calendarEventCount = 9;
 }
 
 void removeLinkedEvent(uint32_t taskId) {
-    if (taskId == 0) return;
-    for (uint32_t i = 0; i < calendarEventCount; i++) {
-        if (calendarEvents[i].linkedTaskId == taskId) {
-            LOG_PRINTF("[Sync] Removing linked event: %s\n", calendarEvents[i].title);
-            for (uint32_t j = i; j < calendarEventCount - 1; j++) {
-                calendarEvents[j] = calendarEvents[j+1];
-            }
-            calendarEventCount--;
-            return; // Assume 1:1 mapping
-        }
+  if (taskId == 0)
+    return;
+  for (uint32_t i = 0; i < calendarEventCount; i++) {
+    if (calendarEvents[i].linkedTaskId == taskId) {
+      LOG_PRINTF("[Sync] Removing linked event: %s\n", calendarEvents[i].title);
+      for (uint32_t j = i; j < calendarEventCount - 1; j++) {
+        calendarEvents[j] = calendarEvents[j + 1];
+      }
+      calendarEventCount--;
+      return; // Assume 1:1 mapping
     }
+  }
 }
 
-void syncTaskToCalendar(const TaskItem& task) {
-    // First, remove any existing linked event
-    removeLinkedEvent(task.timestamp);
+void syncTaskToCalendar(const TaskItem &task) {
+  // First, remove any existing linked event
+  removeLinkedEvent(task.timestamp);
 
-    if (task.hasDueDate) {
-        if (calendarEventCount < MAX_CALENDAR_EVENTS) {
-            calendarEvents[calendarEventCount] = CalendarEvent(
-                task.title, task.dueYear, task.dueMonth, task.dueDay, 
-                task.dueHour, task.dueMinute, 60, "Linked Task", "StikE", task.timestamp
-            );
-            calendarEventCount++;
-            LOG_PRINTF("[Sync] Created calendar event for task: %s at %02d:%02d\n", task.title, task.dueHour, task.dueMinute);
-        }
+  if (task.hasDueDate) {
+    if (calendarEventCount < MAX_CALENDAR_EVENTS) {
+      calendarEvents[calendarEventCount] = CalendarEvent(
+          task.title, task.dueYear, task.dueMonth, task.dueDay, task.dueHour,
+          task.dueMinute, 60, "Linked Task", "StikE", task.timestamp);
+      calendarEventCount++;
+      LOG_PRINTF("[Sync] Created calendar event for task: %s at %02d:%02d\n",
+                 task.title, task.dueHour, task.dueMinute);
     }
+  }
 }
 
 void enterSleepMode() {
-    LOG_PRINTLN("[State] Entering SLEEP mode");
+  LOG_PRINTLN("[State] Entering SLEEP mode");
 
-    displayMgr.turnOffTFT();
-    displayMgr.prepareEpaperViews(tasks, taskCount, calendarEvents, calendarEventCount, calYear, calMonth, calDay, 0);
+  displayMgr.turnOffTFT();
+  displayMgr.prepareEpaperViews(tasks, taskCount, calendarEvents,
+                                calendarEventCount, calYear, calMonth, calDay,
+                                0);
 
-    sleepCycleCount = 0;
-    currentEpaperView = 0;
-    currentState = SystemState::STATE_SLEEP;
-    
-    // Save tasks before sleeping
-    saveTasks();
+  sleepCycleCount = 0;
+  currentEpaperView = 0;
+  currentState = SystemState::STATE_SLEEP;
+
+  // Save tasks before sleeping
+  saveTasks();
 }
 
 void wakeToActive() {
@@ -392,67 +424,258 @@ void parseNaturalLanguageTime(const char* title, int& hour) {
     }
 }
 
-static void handleUIListEvent(const SystemEvent& event) {
-    switch (event.type) {
-        case SystemEventType::EVENT_CANCEL:
-            LOG_PRINTLN("[Input] ESC in LIST - entering sleep");
-            enterSleepMode();
-            return;
+static void handleUIListEvent(const SystemEvent &event) {
+  switch (event.type) {
+  case SystemEventType::EVENT_CANCEL:
+    LOG_PRINTLN("[Input] ESC in LIST - entering sleep");
+    enterSleepMode();
+    return;
 
-        case SystemEventType::SLEEP_REQ:
-            LOG_PRINTLN("[Input] Fn+ESC in LIST - entering sleep");
-            enterSleepMode();
-            return;
+  case SystemEventType::SLEEP_REQ:
+    LOG_PRINTLN("[Input] Fn+ESC in LIST - entering sleep");
+    enterSleepMode();
+    return;
 
-        case SystemEventType::EVENT_NAV_UP:
-            if (selectedTaskIndex > 0) {
-                selectedTaskIndex--;
-                if (selectedTaskIndex < taskListTopIndex) {
-                    taskListTopIndex = selectedTaskIndex;
-                }
-                uiDirty = true;
-            } else if (selectedTaskIndex < 0 && filteredTaskCount > 0) {
-                selectedTaskIndex = 0;
-                taskListTopIndex = 0;
-                uiDirty = true;
-            }
-            break;
+  case SystemEventType::EVENT_NAV_UP:
+    if (selectedTaskIndex > 0) {
+      selectedTaskIndex--;
+      if (selectedTaskIndex < taskListTopIndex) {
+        taskListTopIndex = selectedTaskIndex;
+      }
+      uiDirty = true;
+    } else if (selectedTaskIndex < 0 && filteredTaskCount > 0) {
+      selectedTaskIndex = 0;
+      taskListTopIndex = 0;
+      uiDirty = true;
+    }
+    break;
 
-        case SystemEventType::EVENT_NAV_DOWN:
-            if (selectedTaskIndex < static_cast<int>(filteredTaskCount) - 1) {
-                selectedTaskIndex++;
-                uiDirty = true;
-                const int VISIBLE_ROWS = 7;
-                if (selectedTaskIndex >= taskListTopIndex + VISIBLE_ROWS) {
-                    taskListTopIndex = selectedTaskIndex - VISIBLE_ROWS + 1;
-                }
-            }
-            break;
+  case SystemEventType::EVENT_NAV_DOWN:
+    if (selectedTaskIndex < static_cast<int>(filteredTaskCount) - 1) {
+      selectedTaskIndex++;
+      uiDirty = true;
+      const int VISIBLE_ROWS = 7;
+      if (selectedTaskIndex >= taskListTopIndex + VISIBLE_ROWS) {
+        taskListTopIndex = selectedTaskIndex - VISIBLE_ROWS + 1;
+      }
+    }
+    break;
 
-        case SystemEventType::EVENT_SELECT:
-            if (selectedTaskIndex >= 0 &&
-                selectedTaskIndex < static_cast<int>(filteredTaskCount)) {
-                int realIdx = filteredTaskIndices[selectedTaskIndex];
-                tasks[realIdx].isCompleted = !tasks[realIdx].isCompleted;
-                if (tasks[realIdx].isCompleted) {
-                    tasks[realIdx].completedYear = calYear;
-                    tasks[realIdx].completedMonth = calMonth;
-                    tasks[realIdx].completedDay = calDay;
-                }
-                LOG_PRINTF("[Input] Toggled task (filtered %d) real %d\n", selectedTaskIndex, realIdx);
-                updateFilteredTasks();
-                if (selectedTaskIndex >= filteredTaskCount && filteredTaskCount > 0) {
-                    selectedTaskIndex = filteredTaskCount - 1;
-                } else if (filteredTaskCount == 0) {
-                    selectedTaskIndex = -1;
-                }
-                if (taskListTopIndex >= filteredTaskCount) {
-                    taskListTopIndex = filteredTaskCount > 0 ? filteredTaskCount - 1 : 0;
-                }
-                saveTasks();
-                uiDirty = true;
-            }
-            break;
+  case SystemEventType::EVENT_SELECT:
+    if (selectedTaskIndex >= 0 &&
+        selectedTaskIndex < static_cast<int>(filteredTaskCount)) {
+      int realIdx = filteredTaskIndices[selectedTaskIndex];
+      tasks[realIdx].isCompleted = !tasks[realIdx].isCompleted;
+      if (tasks[realIdx].isCompleted) {
+        tasks[realIdx].completedYear = calYear;
+        tasks[realIdx].completedMonth = calMonth;
+        tasks[realIdx].completedDay = calDay;
+      }
+      LOG_PRINTF("[Input] Toggled task (filtered %d) real %d\n",
+                 selectedTaskIndex, realIdx);
+      updateFilteredTasks();
+      if (selectedTaskIndex >= filteredTaskCount && filteredTaskCount > 0) {
+        selectedTaskIndex = filteredTaskCount - 1;
+      } else if (filteredTaskCount == 0) {
+        selectedTaskIndex = -1;
+      }
+      if (taskListTopIndex >= filteredTaskCount) {
+        taskListTopIndex = filteredTaskCount > 0 ? filteredTaskCount - 1 : 0;
+      }
+      saveTasks();
+      uiDirty = true;
+    }
+    break;
+
+  case SystemEventType::EVENT_TYPE_CHAR:
+    // 'n'/'N' opens Add Task view (blocked when list is full)
+    if (event.param == 'n' || event.param == 'N') {
+      if (taskCount >= MAX_TASKS) {
+        // List is full — signal the UI to show feedback on next draw
+        LOG_PRINTLN("[Input] N - task list full, cannot add");
+        uiDirty = true; // Redraw so footer shows the "LIST FULL" status
+      } else {
+        LOG_PRINTLN("[Input] N - opening Add Task view");
+        inputBuffer[0] = '\0';
+        inputBufferLen = 0;
+        taskEditField = 0;
+        taskEditHasDue = false;
+        taskEditYear = calYear;
+        taskEditMonth = calMonth;
+        taskEditDay = calDay;
+        taskEditHour = 9;
+        taskEditMinute = 0;
+        currentState = SystemState::STATE_UI_ADD_TASK;
+        uiDirty = true;
+      }
+    }
+    // 'q'/'Q' opens Quick Add view
+    else if (event.param == 'q' || event.param == 'Q') {
+      if (taskCount >= MAX_TASKS) {
+        LOG_PRINTLN("[Input] Q - task list full");
+        uiDirty = true;
+      } else {
+        LOG_PRINTLN("[Input] Q - opening Quick Add view");
+        inputBuffer[0] = '\0';
+        inputBufferLen = 0;
+        currentState = SystemState::STATE_UI_QUICK_ADD;
+        uiDirty = true;
+      }
+    }
+    // 'e'/'E' opens Edit Task view
+    else if (event.param == 'e' || event.param == 'E') {
+      if (selectedTaskIndex >= 0 &&
+          selectedTaskIndex < static_cast<int>(filteredTaskCount)) {
+        int realIdx = filteredTaskIndices[selectedTaskIndex];
+        LOG_PRINTF("[Input] E - opening Edit Task view for index %d\n",
+                   realIdx);
+        snprintf(inputBuffer, INPUT_BUFFER_SIZE, "%.*s",
+                 (int)sizeof(tasks[realIdx].title), tasks[realIdx].title);
+        inputBufferLen = strlen(inputBuffer);
+        taskEditField = 0;
+        taskEditHasDue = tasks[realIdx].hasDueDate;
+        taskEditYear =
+            tasks[realIdx].dueYear > 0 ? tasks[realIdx].dueYear : calYear;
+        taskEditMonth =
+            tasks[realIdx].dueMonth > 0 ? tasks[realIdx].dueMonth : calMonth;
+        taskEditDay =
+            tasks[realIdx].dueDay > 0 ? tasks[realIdx].dueDay : calDay;
+        taskEditHour = tasks[realIdx].dueHour;
+        taskEditMinute = tasks[realIdx].dueMinute;
+        currentState = SystemState::STATE_UI_EDIT_TASK;
+        uiDirty = true;
+      }
+    } else if (event.param == 'v' || event.param == 'V') {
+      if (currentTaskView == TaskViewMode::ACTIVE)
+        currentTaskView = TaskViewMode::COMPLETED;
+      else if (currentTaskView == TaskViewMode::COMPLETED)
+        currentTaskView = TaskViewMode::BOTH;
+      else
+        currentTaskView = TaskViewMode::ACTIVE;
+      updateFilteredTasks();
+      selectedTaskIndex = (filteredTaskCount > 0) ? 0 : -1;
+      taskListTopIndex = 0;
+      uiDirty = true;
+    }
+    // 0x9A (Fn+A) opens Alignment Mode
+    else if (event.param == 0x9A) {
+      LOG_PRINTLN("[Input] Fn+A - entering alignment mode");
+      currentState = SystemState::STATE_UI_ALIGN;
+      displayMgr.clearFullHardwareScreen();
+      uiDirty = true;
+    }
+    // 0xA8 (Fn+C) opens Calendar
+    else if (event.param == 0xA8) {
+      LOG_PRINTLN("[Input] Fn+C - entering calendar mode");
+      currentState = SystemState::STATE_UI_CALENDAR;
+      uiDirty = true;
+    }
+    // 0x9F (Fn+H) opens Help
+    else if (event.param == 0x9F) {
+      previousState = currentState;
+      currentState = SystemState::STATE_UI_HELP;
+      uiDirty = true;
+    }
+    break;
+
+  case SystemEventType::EVENT_BACKSPACE:
+    if (selectedTaskIndex >= 0 &&
+        selectedTaskIndex < static_cast<int>(filteredTaskCount)) {
+      int realIdx = filteredTaskIndices[selectedTaskIndex];
+      LOG_PRINTF("[Input] Backspace - deleting task %d\n", realIdx);
+      removeLinkedEvent(tasks[realIdx].timestamp);
+      for (uint32_t i = realIdx; i < taskCount - 1; ++i) {
+        tasks[i] = tasks[i + 1];
+      }
+      taskCount--;
+      updateFilteredTasks();
+      if (selectedTaskIndex >= static_cast<int>(filteredTaskCount) &&
+          filteredTaskCount > 0) {
+        selectedTaskIndex = static_cast<int>(filteredTaskCount) - 1;
+      } else if (filteredTaskCount == 0) {
+        selectedTaskIndex = -1;
+      }
+      // Clamp scroll window after deletion
+      if (taskListTopIndex > 0 &&
+          taskListTopIndex >= static_cast<int>(filteredTaskCount)) {
+        taskListTopIndex = static_cast<int>(filteredTaskCount) - 1;
+        if (taskListTopIndex < 0)
+          taskListTopIndex = 0;
+      }
+      saveTasks();
+      uiDirty = true;
+    }
+    break;
+
+  default:
+    break;
+  }
+}
+
+static bool handleSharedTaskEditInput(const SystemEvent &event) {
+  switch (event.type) {
+  case SystemEventType::EVENT_TYPE_CHAR: {
+    int c = event.param;
+    if (taskEditField == 0) { // Title
+      if (inputBufferLen < INPUT_BUFFER_SIZE - 1 && c >= 0x20 && c <= 0x7E) {
+        inputBuffer[inputBufferLen++] = static_cast<char>(c);
+        inputBuffer[inputBufferLen] = '\0';
+        uiDirty = true;
+      }
+    } else if (taskEditField == 1) { // Has Due Date
+      if (c == 'y' || c == 'Y') {
+        taskEditHasDue = true;
+        uiDirty = true;
+      } else if (c == 'n' || c == 'N') {
+        taskEditHasDue = false;
+        uiDirty = true;
+      }
+    }
+    if (event.param == 0x9F) { // Fn + H
+      previousState = currentState;
+      currentState = SystemState::STATE_UI_HELP;
+      uiDirty = true;
+    }
+    break;
+  }
+
+  case SystemEventType::EVENT_NAV_UP:
+    if (taskEditField == 2) {
+      taskEditDay = (taskEditDay % 31) + 1;
+      uiDirty = true;
+    } else if (taskEditField == 3) {
+      taskEditMonth = (taskEditMonth % 12) + 1;
+      uiDirty = true;
+    } else if (taskEditField == 4) {
+      taskEditYear++;
+      uiDirty = true;
+    } else if (taskEditField == 5) {
+      taskEditHour = (taskEditHour + 1) % 24;
+      uiDirty = true;
+    } else if (taskEditField == 6) {
+      taskEditMinute = (taskEditMinute + 5) % 60;
+      uiDirty = true;
+    }
+    break;
+
+  case SystemEventType::EVENT_NAV_DOWN:
+    if (taskEditField == 2) {
+      taskEditDay = (taskEditDay > 1) ? taskEditDay - 1 : 31;
+      uiDirty = true;
+    } else if (taskEditField == 3) {
+      taskEditMonth = (taskEditMonth > 1) ? taskEditMonth - 1 : 12;
+      uiDirty = true;
+    } else if (taskEditField == 4) {
+      taskEditYear--;
+      uiDirty = true;
+    } else if (taskEditField == 5) {
+      taskEditHour = (taskEditHour + 23) % 24;
+      uiDirty = true;
+    } else if (taskEditField == 6) {
+      taskEditMinute = (taskEditMinute > 0) ? taskEditMinute - 5 : 55;
+      uiDirty = true;
+    }
+    break;
 
         case SystemEventType::EVENT_TYPE_CHAR:
             // 'n'/'N' opens Add Task view (blocked when list is full)
@@ -537,34 +760,48 @@ static void handleUIListEvent(const SystemEvent& event) {
             }
             break;
 
-        case SystemEventType::EVENT_BACKSPACE:
-            if (selectedTaskIndex >= 0 && selectedTaskIndex < static_cast<int>(filteredTaskCount)) {
-                int realIdx = filteredTaskIndices[selectedTaskIndex];
-                LOG_PRINTF("[Input] Backspace - deleting task %d\n", realIdx);
-                removeLinkedEvent(tasks[realIdx].timestamp);
-                for (uint32_t i = realIdx; i < taskCount - 1; ++i) {
-                    tasks[i] = tasks[i + 1];
-                }
-                taskCount--;
-                updateFilteredTasks();
-                if (selectedTaskIndex >= static_cast<int>(filteredTaskCount) && filteredTaskCount > 0) {
-                    selectedTaskIndex = static_cast<int>(filteredTaskCount) - 1;
-                } else if (filteredTaskCount == 0) {
-                    selectedTaskIndex = -1;
-                }
-                // Clamp scroll window after deletion
-                if (taskListTopIndex > 0 && taskListTopIndex >= static_cast<int>(filteredTaskCount)) {
-                    taskListTopIndex = static_cast<int>(filteredTaskCount) - 1;
-                    if (taskListTopIndex < 0) taskListTopIndex = 0;
-                }
-                saveTasks();
-                uiDirty = true;
-            }
-            break;
+  default:
+    break;
+  }
+  return false;
+}
 
-        default:
-            break;
+static void handleUIAddTaskEvent(const SystemEvent &event) {
+  if (event.type == SystemEventType::EVENT_CANCEL) {
+    LOG_PRINTLN("[Input] ESC in ADD - canceling");
+    inputBuffer[0] = '\0';
+    inputBufferLen = 0;
+    currentState = SystemState::STATE_UI_LIST;
+    uiDirty = true;
+    return;
+  }
+  if (event.type == SystemEventType::SLEEP_REQ) {
+    enterSleepMode();
+    return;
+  }
+
+  if (handleSharedTaskEditInput(event)) {
+    if (inputBufferLen > 0 && taskCount < MAX_TASKS) {
+      int finalHour = taskEditHour;
+      parseNaturalLanguageTime(inputBuffer, finalHour);
+      tasks[taskCount] =
+          TaskItem(inputBuffer, false, millis(), taskEditHasDue, taskEditYear,
+                   taskEditMonth, taskEditDay, finalHour, taskEditMinute);
+      syncTaskToCalendar(tasks[taskCount]);
+      taskCount++;
+      LOG_PRINTF("[Input] Added task: %s (H:%d)\n", inputBuffer, finalHour);
+      updateFilteredTasks();
+      if (selectedTaskIndex < 0 && filteredTaskCount > 0) {
+        selectedTaskIndex = 0;
+      }
+      saveTasks();
     }
+    inputBuffer[0] = '\0';
+    inputBufferLen = 0;
+    taskEditField = 0;
+    currentState = SystemState::STATE_UI_LIST;
+    uiDirty = true;
+  }
 }
 
 static void handleUIAddTaskEvent(const SystemEvent& event) {
@@ -673,22 +910,46 @@ static void handleUIAddTaskEvent(const SystemEvent& event) {
         default:
             break;
     }
+    inputBuffer[0] = '\0';
+    inputBufferLen = 0;
+    taskEditField = 0;
+    currentState = SystemState::STATE_UI_LIST;
+    uiDirty = true;
+  }
 }
 
-static void handleUIEditTaskEvent(const SystemEvent& event) {
-    switch (event.type) {
-        case SystemEventType::EVENT_CANCEL:
-            // ESC in EDIT_TASK = cancel
-            LOG_PRINTLN("[Input] ESC in EDIT - canceling");
-            inputBuffer[0] = '\0';
-            inputBufferLen = 0;
-            currentState = SystemState::STATE_UI_LIST;
-            uiDirty = true;
-            break;
+static void handleUIAlignEvent(const SystemEvent &event) {
+  switch (event.type) {
+  case SystemEventType::EVENT_CANCEL:
+    // ESC in ALIGN = return to LIST
+    LOG_PRINTLN("[Input] ESC in ALIGN - returning to list");
+    currentState = SystemState::STATE_UI_LIST;
+    displayMgr.clearFullHardwareScreen();
+    uiDirty = true;
+    break;
 
-        case SystemEventType::SLEEP_REQ:
-            enterSleepMode();
-            break;
+  case SystemEventType::SLEEP_REQ:
+    enterSleepMode();
+    break;
+
+  case SystemEventType::EVENT_TYPE_CHAR:
+    if (event.param == 0x9F) { // Fn + H
+      previousState = currentState;
+      currentState = SystemState::STATE_UI_HELP;
+      uiDirty = true;
+    } else if (event.param == 0x9B) { // Fn + S
+      previousState = currentState;
+      currentState = SystemState::STATE_UI_SETTINGS;
+      settingsSelectedIndex = 0;
+      uiDirty = true;
+    }
+    break;
+
+  case SystemEventType::EVENT_NAV_UP:
+    displayMgr.offsetY--;
+    displayMgr.clearFullHardwareScreen();
+    uiDirty = true;
+    break;
 
         case SystemEventType::EVENT_TYPE_CHAR: {
             int c = event.param;
@@ -716,33 +977,22 @@ static void handleUIEditTaskEvent(const SystemEvent& event) {
             break;
         }
 
-        case SystemEventType::EVENT_NAV_UP:
-            if (taskEditField == 2) { taskEditDay = (taskEditDay % 31) + 1; uiDirty = true; }
-            else if (taskEditField == 3) { taskEditMonth = (taskEditMonth % 12) + 1; uiDirty = true; }
-            else if (taskEditField == 4) { taskEditYear++; uiDirty = true; }
-            else if (taskEditField == 5) { taskEditHour = (taskEditHour + 1) % 24; uiDirty = true; }
-            else if (taskEditField == 6) { taskEditMinute = (taskEditMinute + 5) % 60; uiDirty = true; }
-            break;
+  case SystemEventType::EVENT_NAV_LEFT:
+    displayMgr.offsetX--;
+    displayMgr.clearFullHardwareScreen();
+    uiDirty = true;
+    break;
 
-        case SystemEventType::EVENT_NAV_DOWN:
-            if (taskEditField == 2) { taskEditDay = (taskEditDay > 1) ? taskEditDay - 1 : 31; uiDirty = true; }
-            else if (taskEditField == 3) { taskEditMonth = (taskEditMonth > 1) ? taskEditMonth - 1 : 12; uiDirty = true; }
-            else if (taskEditField == 4) { taskEditYear--; uiDirty = true; }
-            else if (taskEditField == 5) { taskEditHour = (taskEditHour + 23) % 24; uiDirty = true; }
-            else if (taskEditField == 6) { taskEditMinute = (taskEditMinute > 0) ? taskEditMinute - 5 : 55; uiDirty = true; }
-            break;
+  case SystemEventType::EVENT_NAV_RIGHT:
+    displayMgr.offsetX++;
+    displayMgr.clearFullHardwareScreen();
+    uiDirty = true;
+    break;
 
-        case SystemEventType::EVENT_BACKSPACE:
-            if (taskEditField == 0) {
-                if (inputBufferLen > 0) {
-                    inputBuffer[--inputBufferLen] = '\0';
-                    uiDirty = true;
-                }
-            } else {
-                taskEditField--;
-                uiDirty = true;
-            }
-            break;
+  default:
+    break;
+  }
+}
 
         case SystemEventType::EVENT_SELECT:
             if (taskEditField == 0) {
@@ -777,26 +1027,28 @@ static void handleUIEditTaskEvent(const SystemEvent& event) {
                 currentState = SystemState::STATE_UI_LIST;
                 uiDirty = true;
             }
-            break;
-
-        default:
-            break;
+            dayIdx++;
+          }
+        }
+        uiDirty = true;
+      }
     }
+    break;
+
+  case SystemEventType::EVENT_BACKSPACE:
+    if (currentCalendarView != CalendarView::MONTH) {
+      currentCalendarView = CalendarView::MONTH;
+      uiDirty = true;
+    } else {
+      currentState = SystemState::STATE_UI_LIST;
+      uiDirty = true;
+    }
+    break;
+
+  default:
+    break;
+  }
 }
-
-static void handleUIAlignEvent(const SystemEvent& event) {
-    switch (event.type) {
-        case SystemEventType::EVENT_CANCEL:
-            // ESC in ALIGN = return to LIST
-            LOG_PRINTLN("[Input] ESC in ALIGN - returning to list");
-            currentState = SystemState::STATE_UI_LIST;
-            displayMgr.clearFullHardwareScreen();
-            uiDirty = true;
-            break;
-
-        case SystemEventType::SLEEP_REQ:
-            enterSleepMode();
-            break;
 
         case SystemEventType::EVENT_TYPE_CHAR:
             if (event.param == 0x9F) { // Fn + H
@@ -811,133 +1063,158 @@ static void handleUIAlignEvent(const SystemEvent& event) {
             }
             break;
 
-        case SystemEventType::EVENT_NAV_UP:
-            displayMgr.offsetY--;
-            displayMgr.clearFullHardwareScreen();
-            uiDirty = true;
-            break;
-
-        case SystemEventType::EVENT_NAV_DOWN:
-            displayMgr.offsetY++;
-            displayMgr.clearFullHardwareScreen();
-            uiDirty = true;
-            break;
-            
-        case SystemEventType::EVENT_NAV_LEFT:
-            displayMgr.offsetX--;
-            displayMgr.clearFullHardwareScreen();
-            uiDirty = true;
-            break;
-            
-        case SystemEventType::EVENT_NAV_RIGHT:
-            displayMgr.offsetX++;
-            displayMgr.clearFullHardwareScreen();
-            uiDirty = true;
-            break;
-
-        default:
-            break;
+  case SystemEventType::EVENT_SELECT:
+    if (eventEditField < 2) {
+      eventEditField++;
+      uiDirty = true;
+    } else {
+      if (calendarEventCount < MAX_CALENDAR_EVENTS) {
+        calendarEvents[calendarEventCount] =
+            CalendarEvent(inputBuffer, calYear, calMonth, calDay, eventEditHour,
+                          0, eventEditDuration);
+        calendarEventCount++;
+      }
+      currentState = SystemState::STATE_UI_CALENDAR;
+      uiDirty = true;
     }
+    break;
+
+  case SystemEventType::EVENT_BACKSPACE:
+    if (eventEditField == 0 && inputBufferLen > 0) {
+      inputBuffer[--inputBufferLen] = '\0';
+      uiDirty = true;
+    } else if (eventEditField > 0) {
+      eventEditField--;
+      uiDirty = true;
+    }
+    break;
+
+  default:
+    break;
+  }
 }
 
-static void handleUICalendarEvent(const SystemEvent& event) {
-    switch (event.type) {
-        case SystemEventType::EVENT_CANCEL:
-            LOG_PRINTLN("[Input] ESC in CALENDAR - returning to list");
-            currentState = SystemState::STATE_UI_LIST;
-            uiDirty = true;
-            break;
+static void handleUIEventDetailEvent(const SystemEvent &event) {
+  switch (event.type) {
+  case SystemEventType::EVENT_CANCEL:
+  case SystemEventType::EVENT_BACKSPACE:
+    currentState = SystemState::STATE_UI_CALENDAR;
+    uiDirty = true;
+    break;
+  case SystemEventType::SLEEP_REQ:
+    enterSleepMode();
+    break;
+  case SystemEventType::EVENT_NAV_UP:
+    if (detailScrollY > 0) {
+      detailScrollY -= 10; // Scroll by 10 pixels (one line height)
+      uiDirty = true;
+    }
+    break;
+  case SystemEventType::EVENT_NAV_DOWN:
+    // Max scroll depends on content, but let's cap it at 100 for now
+    // or we could calculate it in the draw function.
+    if (detailScrollY < 120) {
+      detailScrollY += 10;
+      uiDirty = true;
+    }
+    break;
+  case SystemEventType::EVENT_TYPE_CHAR:
+    if (event.param == 0x9F) { // Fn + H
+      previousState = currentState;
+      currentState = SystemState::STATE_UI_HELP;
+      uiDirty = true;
+    } else if (event.param == 0x9B) { // Fn + S
+      previousState = currentState;
+      currentState = SystemState::STATE_UI_SETTINGS;
+      settingsSelectedIndex = 0;
+      uiDirty = true;
+    }
+    break;
+  default:
+    break;
+  }
+}
 
-        case SystemEventType::SLEEP_REQ:
-            enterSleepMode();
-            break;
+static void handleUIHelpEvent(const SystemEvent &event) {
+  switch (event.type) {
+  case SystemEventType::EVENT_BACKSPACE:
+  case SystemEventType::EVENT_CANCEL:
+    currentState = previousState;
+    uiDirty = true;
+    break;
+  case SystemEventType::SLEEP_REQ:
+    enterSleepMode();
+    break;
+  default:
+    break;
+  }
+}
 
-        case SystemEventType::EVENT_NAV_UP:
-            if (currentCalendarView == CalendarView::MONTH) {
-                calDay -= 7;
-                if (calDay < 1) {
-                    calMonth--;
-                    if (calMonth < 1) { calMonth = 12; calYear--; }
-                    int prevDays = DisplayManager::getDaysInMonth(calYear, calMonth);
-                    calDay = prevDays + calDay; 
-                }
-            } else if (currentCalendarView == CalendarView::DAY) {
-                if (selectedEventIndex > 0) selectedEventIndex--;
-            } else {
-                calDay--;
-                if (calDay < 1) calDay = 1;
-            }
-            uiDirty = true;
-            break;
+// ==========================================
+// Synchronization
+// ==========================================
+void syncGoogleCalendar() {
+  if (strlen(wifiSSID) == 0 || strlen(gcalURL) == 0) {
+    LOG_PRINTLN("[Sync] Missing WiFi SSID or GCal URL. Aborting.");
+    return;
+  }
 
-        case SystemEventType::EVENT_NAV_DOWN:
-            if (currentCalendarView == CalendarView::MONTH) {
-                int days = DisplayManager::getDaysInMonth(calYear, calMonth);
-                calDay += 7;
-                if (calDay > days) {
-                    int extra = calDay - days;
-                    calMonth++;
-                    if (calMonth > 12) { calMonth = 1; calYear++; }
-                    calDay = extra;
-                }
-            } else if (currentCalendarView == CalendarView::DAY) {
-                // Count events for this day
-                int dayCount = 0;
-                for (uint32_t i = 0; i < calendarEventCount; i++) {
-                    if (calendarEvents[i].day == calDay && calendarEvents[i].month == calMonth && calendarEvents[i].year == calYear) dayCount++;
-                }
-                if (selectedEventIndex < dayCount - 1) selectedEventIndex++;
-            } else {
-                calDay++;
-                if (calDay > 31) calDay = 31;
-            }
-            uiDirty = true;
-            break;
+  displayMgr.turnOnTFT();
+  displayMgr.drawDirectColorFrame(TFT_NAVY); // Indicate syncing state visually
 
-        case SystemEventType::EVENT_NAV_LEFT:
-            if (currentCalendarView == CalendarView::MONTH) {
-                calDay--;
-                if (calDay < 1) {
-                    calMonth--;
-                    if (calMonth < 1) { calMonth = 12; calYear--; }
-                    calDay = DisplayManager::getDaysInMonth(calYear, calMonth);
-                }
-            } else {
-                calDay--;
-                if (calDay < 1) calDay = 1;
-            }
-            uiDirty = true;
-            break;
+  LOG_PRINTF("[Sync] Connecting to WiFi: %s\n", wifiSSID);
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(wifiSSID, wifiPassword);
 
-        case SystemEventType::EVENT_NAV_RIGHT:
-            if (currentCalendarView == CalendarView::MONTH) {
-                int days = DisplayManager::getDaysInMonth(calYear, calMonth);
-                calDay++;
-                if (calDay > days) {
-                    calMonth++;
-                    if (calMonth > 12) { calMonth = 1; calYear++; }
-                    calDay = 1;
-                }
-            } else {
-                calDay++;
-                if (calDay > 31) calDay = 31;
-            }
-            uiDirty = true;
-            break;
+  int attempts = 0;
+  while (WiFi.status() != WL_CONNECTED && attempts < 20) {
+    delay(500);
+    Serial.print(".");
+    attempts++;
+  }
+  Serial.println();
 
-        case SystemEventType::EVENT_SELECT:
-            if (currentCalendarView == CalendarView::MONTH) {
-                currentCalendarView = CalendarView::DAY;
-                selectedEventIndex = 0;
-            } else if (currentCalendarView == CalendarView::DAY) {
-                if (selectedEventIndex >= 0) {
-                    detailScrollY = 0;
-                    currentState = SystemState::STATE_UI_EVENT_DETAIL;
-                } else {
-                    currentCalendarView = CalendarView::MONTH;
-                }
-            }
-            uiDirty = true;
+  if (WiFi.status() != WL_CONNECTED) {
+    LOG_PRINTLN("[Sync] Failed to connect to WiFi.");
+    WiFi.mode(WIFI_OFF);
+    return;
+  }
+  LOG_PRINTLN("[Sync] WiFi Connected!");
+
+  // Fetch Calendar Events
+  LOG_PRINTF("[Sync] Fetching Calendar from: %s\n", gcalURL);
+  HTTPClient http;
+  http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+  http.begin(gcalURL);
+  int httpCode = http.GET();
+
+  if (httpCode > 0) {
+    if (httpCode == HTTP_CODE_OK) {
+      String payload = http.getString();
+      LOG_PRINTLN("[Sync] Received JSON payload. Parsing...");
+
+      // Parse JSON
+      DynamicJsonDocument doc(8192); // ~8KB for a batch of events
+      DeserializationError error = deserializeJson(doc, payload);
+
+      if (error) {
+        LOG_PRINTF("[Sync] deserializeJson() failed: %s\n", error.c_str());
+      } else {
+        // Clear old synced events (those not linked to a local task)
+        uint32_t newCount = 0;
+        CalendarEvent tempEvents[MAX_CALENDAR_EVENTS];
+
+        // Keep locally created / task-linked events
+        for (uint32_t i = 0; i < calendarEventCount; i++) {
+          if (calendarEvents[i].linkedTaskId != 0) {
+            tempEvents[newCount++] = calendarEvents[i];
+          }
+        }
+
+        // Add new remote events
+        JsonArray events = doc.as<JsonArray>();
+        for (JsonObject event : events) {
+          if (newCount >= MAX_CALENDAR_EVENTS)
             break;
 
         case SystemEventType::EVENT_TYPE_CHAR:
@@ -984,22 +1261,35 @@ static void handleUICalendarEvent(const SystemEvent& event) {
             }
             break;
 
-        case SystemEventType::EVENT_BACKSPACE:
-            if (currentCalendarView != CalendarView::MONTH) {
-                currentCalendarView = CalendarView::MONTH;
-                uiDirty = true;
-            } else {
-                currentState = SystemState::STATE_UI_LIST;
-                uiDirty = true;
-            }
-            break;
+        // Copy back
+        calendarEventCount = newCount;
+        for (uint32_t i = 0; i < calendarEventCount; i++) {
+          calendarEvents[i] = tempEvents[i];
+        }
 
-        default:
-            break;
+        LOG_PRINTF("[Sync] Calendar updated. Total events: %d\n",
+                   calendarEventCount);
+      }
+    } else {
+      LOG_PRINTF("[Sync] HTTP GET failed, error: %s\n",
+                 http.errorToString(httpCode).c_str());
     }
+  } else {
+    LOG_PRINTF("[Sync] HTTP Connection failed, error: %s\n",
+               http.errorToString(httpCode).c_str());
+  }
+
+  http.end();
+
+  // Disconnect
+  WiFi.disconnect(true);
+  WiFi.mode(WIFI_OFF);
+  LOG_PRINTLN("[Sync] Complete. WiFi powered off.");
+  uiDirty = true;
 }
 
-static void handleUIAddEventEvent(const SystemEvent& event) {
+static void handleUISettingsEvent(const SystemEvent &event) {
+  if (isEditingSetting) {
     switch (event.type) {
         case SystemEventType::EVENT_CANCEL:
             currentState = SystemState::STATE_UI_CALENDAR;
@@ -1042,35 +1332,86 @@ static void handleUIAddEventEvent(const SystemEvent& event) {
             else if (eventEditField == 2) { if (eventEditDuration > 15) eventEditDuration -= 15; uiDirty = true; }
             break;
 
-        case SystemEventType::EVENT_SELECT:
-            if (eventEditField < 2) {
-                eventEditField++;
-                uiDirty = true;
-            } else {
-                if (calendarEventCount < MAX_CALENDAR_EVENTS) {
-                    calendarEvents[calendarEventCount] = CalendarEvent(inputBuffer, calYear, calMonth, calDay, eventEditHour, 0, eventEditDuration);
-                    calendarEventCount++;
-                }
-                currentState = SystemState::STATE_UI_CALENDAR;
-                uiDirty = true;
-            }
-            break;
+  case SystemEventType::SLEEP_REQ:
+    enterSleepMode();
+    break;
 
-        case SystemEventType::EVENT_BACKSPACE:
-            if (eventEditField == 0 && inputBufferLen > 0) {
-                inputBuffer[--inputBufferLen] = '\0';
-                uiDirty = true;
-            } else if (eventEditField > 0) {
-                eventEditField--;
-                uiDirty = true;
-            }
-            break;
-
-        default:
-            break;
+  case SystemEventType::EVENT_NAV_UP:
+    if (settingsSelectedIndex > 0) {
+      settingsSelectedIndex--;
+      uiDirty = true;
     }
-}
+    break;
 
+  case SystemEventType::EVENT_NAV_DOWN:
+    if (settingsSelectedIndex < 6) { // We have 7 settings
+      settingsSelectedIndex++;
+      uiDirty = true;
+    }
+    break;
+
+  case SystemEventType::EVENT_NAV_LEFT:
+    if (settingsSelectedIndex == 0) { // Brightness
+      if (tftBrightness >= 25)
+        tftBrightness -= 25;
+      else
+        tftBrightness = 0;
+      displayMgr.setTFTBrightness(tftBrightness);
+      uiDirty = true;
+    } else if (settingsSelectedIndex == 1) { // AutoSleep
+      if (autoSleepMinutes > 0)
+        autoSleepMinutes--;
+      uiDirty = true;
+    } else if (settingsSelectedIndex == 2) { // LowPower
+      isLowPowerMode = false;
+      setLowPowerMode(isLowPowerMode);
+      uiDirty = true;
+    }
+    break;
+
+  case SystemEventType::EVENT_NAV_RIGHT:
+    if (settingsSelectedIndex == 0) { // Brightness
+      if (tftBrightness <= 230)
+        tftBrightness += 25;
+      else
+        tftBrightness = 255;
+      displayMgr.setTFTBrightness(tftBrightness);
+      uiDirty = true;
+    } else if (settingsSelectedIndex == 1) { // AutoSleep
+      if (autoSleepMinutes < 60)
+        autoSleepMinutes++;
+      uiDirty = true;
+    } else if (settingsSelectedIndex == 2) { // LowPower
+      isLowPowerMode = true;
+      setLowPowerMode(isLowPowerMode);
+      uiDirty = true;
+    }
+    break;
+
+  case SystemEventType::EVENT_SELECT:
+    if (settingsSelectedIndex == 6) {
+      syncGoogleCalendar();
+      uiDirty = true;
+    } else if (settingsSelectedIndex >= 3 && settingsSelectedIndex <= 5) {
+      // Enter edit mode
+      isEditingSetting = true;
+      inputBufferLen = 0;
+      if (settingsSelectedIndex == 3) {
+        strncpy(inputBuffer, wifiSSID, INPUT_BUFFER_SIZE);
+      } else if (settingsSelectedIndex == 4) {
+        strncpy(inputBuffer, wifiPassword, INPUT_BUFFER_SIZE);
+      } else if (settingsSelectedIndex == 5) {
+        strncpy(inputBuffer, gcalURL, INPUT_BUFFER_SIZE);
+      }
+      inputBufferLen = strlen(inputBuffer);
+      uiDirty = true;
+    }
+    break;
+
+  default:
+    break;
+  }
+}
 
 static void handleUIEventDetailEvent(const SystemEvent& event) {
     switch (event.type) {
@@ -1111,22 +1452,36 @@ static void handleUIEventDetailEvent(const SystemEvent& event) {
         default:
             break;
     }
-}
+    break;
+  }
 
-static void handleUIHelpEvent(const SystemEvent& event) {
-    switch (event.type) {
-        case SystemEventType::EVENT_BACKSPACE:
-        case SystemEventType::EVENT_CANCEL:
-            currentState = previousState;
-            uiDirty = true;
-            break;
-        case SystemEventType::SLEEP_REQ:
-            enterSleepMode();
-            break;
-        default:
-            break;
+  case SystemEventType::EVENT_BACKSPACE:
+    if (inputBufferLen > 0) {
+      inputBuffer[--inputBufferLen] = '\0';
+      uiDirty = true;
     }
-}
+    break;
+
+  case SystemEventType::EVENT_SELECT: {
+    if (inputBufferLen > 0 && taskCount < MAX_TASKS) {
+      int finalHour = 9; // Default
+      parseNaturalLanguageTime(inputBuffer, finalHour);
+      bool hasDue = (strstr(inputBuffer, "@") != nullptr);
+
+      tasks[taskCount] = TaskItem(inputBuffer, false, millis(), hasDue, calYear,
+                                  calMonth, calDay, finalHour, 0);
+      syncTaskToCalendar(tasks[taskCount]);
+      taskCount++;
+      LOG_PRINTF("[QuickAdd] Added task: %s (H:%d)\n", inputBuffer, finalHour);
+      updateFilteredTasks();
+      saveTasks();
+    }
+    inputBuffer[0] = '\0';
+    inputBufferLen = 0;
+    currentState = SystemState::STATE_UI_LIST;
+    uiDirty = true;
+    break;
+  }
 
 
 
@@ -1368,94 +1723,36 @@ static void handleUIQuickAddEvent(const SystemEvent& event) {
             uiDirty = true;
             break;
 
-        case SystemEventType::SLEEP_REQ:
-            enterSleepMode();
-            break;
-
-        case SystemEventType::EVENT_TYPE_CHAR: {
-            int c = event.param;
-            if (inputBufferLen < INPUT_BUFFER_SIZE - 1 && c >= 0x20 && c <= 0x7E) {
-                inputBuffer[inputBufferLen++] = static_cast<char>(c);
-                inputBuffer[inputBufferLen] = '\0';
-                uiDirty = true;
-            }
-            break;
-        }
-
-        case SystemEventType::EVENT_BACKSPACE:
-            if (inputBufferLen > 0) {
-                inputBuffer[--inputBufferLen] = '\0';
-                uiDirty = true;
-            }
-            break;
-
-        case SystemEventType::EVENT_SELECT: {
-            if (inputBufferLen > 0 && taskCount < MAX_TASKS) {
-                int finalHour = 9; // Default
-                parseNaturalLanguageTime(inputBuffer, finalHour);
-                bool hasDue = (strstr(inputBuffer, "@") != nullptr);
-                
-                tasks[taskCount] = TaskItem(inputBuffer, false, millis(), hasDue, calYear, calMonth, calDay, finalHour, 0);
-                syncTaskToCalendar(tasks[taskCount]);
-                taskCount++;
-                LOG_PRINTF("[QuickAdd] Added task: %s (H:%d)\n", inputBuffer, finalHour);
-                updateFilteredTasks();
-                saveTasks();
-            }
-            inputBuffer[0] = '\0';
-            inputBufferLen = 0;
-            currentState = SystemState::STATE_UI_LIST;
-            uiDirty = true;
-            break;
-        }
-
-        default:
-            break;
-    }
-}
-
 void handleSleepState() {
-    LOG_PRINTF("[Sleep] Cycle %u, view %d\n", sleepCycleCount, currentEpaperView);
+  LOG_PRINTF("[Sleep] Cycle %u, view %d\n", sleepCycleCount, currentEpaperView);
 
 #ifndef DIAG_UI_ONLY
-    uint32_t totalViews = displayMgr.getEpaperViewCount();
-    if (totalViews > 0) {
-        displayMgr.updateEpaperPartial(currentEpaperView);
-        currentEpaperView = (currentEpaperView + 1) % totalViews;
-    }
+  uint32_t totalViews = displayMgr.getEpaperViewCount();
+  if (totalViews > 0) {
+    displayMgr.updateEpaperPartial(currentEpaperView);
+    currentEpaperView = (currentEpaperView + 1) % totalViews;
+  }
 #endif
-    sleepCycleCount++;
+  sleepCycleCount++;
 
-    // Configure wake-up sources
-    esp_sleep_enable_timer_wakeup(SLEEP_DURATION_US);
-    
-    // Enable GPIO 14 LOW_LEVEL wake only when going to sleep!
-    // Doing this in setup() causes an interrupt storm if the button is held low.
-    gpio_wakeup_enable(static_cast<gpio_num_t>(Pins::WAKE_BTN), GPIO_INTR_LOW_LEVEL);
-    esp_sleep_enable_gpio_wakeup();
+  // Configure wake-up sources
+  esp_sleep_enable_timer_wakeup(SLEEP_DURATION_US);
 
-    // Clear wake flag before sleeping
-    wakeRequested = false;
+  // Enable GPIO 14 LOW_LEVEL wake only when going to sleep!
+  // Doing this in setup() causes an interrupt storm if the button is held low.
+  gpio_wakeup_enable(static_cast<gpio_num_t>(Pins::WAKE_BTN),
+                     GPIO_INTR_LOW_LEVEL);
+  esp_sleep_enable_gpio_wakeup();
 
-    // DO NOT power down VDDSDIO during light sleep! It crashes the flash memory 
-    // causing a reboot (which explains the random color flashing on wake).
-    // esp_sleep_pd_config(ESP_PD_DOMAIN_VDDSDIO, ESP_PD_OPTION_OFF);
+  // Clear wake flag before sleeping
+  wakeRequested = false;
 
-    // Enter light sleep
-    esp_light_sleep_start();
+  // DO NOT power down VDDSDIO during light sleep! It crashes the flash memory
+  // causing a reboot (which explains the random color flashing on wake).
+  // esp_sleep_pd_config(ESP_PD_DOMAIN_VDDSDIO, ESP_PD_OPTION_OFF);
 
-    // Disable low level wakeup immediately after waking so it doesn't cause WDT panics
-    gpio_wakeup_disable(static_cast<gpio_num_t>(Pins::WAKE_BTN));
-    
-    // Re-attach active-mode falling edge interrupt just to be safe
-    attachInterrupt(Pins::WAKE_BTN, wakeButtonISR, FALLING);
-
-    // Check wake reason immediately after waking
-    if (wakeRequested) {
-        LOG_PRINTLN("[Sleep] Woke from GPIO interrupt");
-        wakeToActive();
-    }
-}
+  // Enter light sleep
+  esp_light_sleep_start();
 
 void setup() {
     // Disable unused radios to save significant power
@@ -1468,65 +1765,87 @@ void setup() {
     // Wait for Serial to connect (up to 3 seconds) for easier debugging
     while (!Serial && millis() < 5000); 
 
-    delay(500);
-    LOG_PRINTLN("\n=== StikE Firmware Starting ===");
+  // Re-attach active-mode falling edge interrupt just to be safe
+  attachInterrupt(Pins::WAKE_BTN, wakeButtonISR, FALLING);
 
-    LOG_PRINTLN("[Setup] Calling displayMgr.initBusesAndDisplays()...");
-    displayMgr.initBusesAndDisplays();
-    LOG_PRINTLN("[Setup] displayMgr.initBusesAndDisplays() returned");
-    delay(100); // Stabilization delay
-    
-    LOG_PRINTLN("[Setup] Calling keyboardMgr.init()...");
-    keyboardMgr.init();
-    LOG_PRINTLN("[Setup] keyboardMgr.init() returned");
-    delay(100); // Stabilization delay
+  // Check wake reason immediately after waking
+  if (wakeRequested) {
+    LOG_PRINTLN("[Sleep] Woke from GPIO interrupt");
+    wakeToActive();
+  }
+}
 
-    pinMode(Pins::WAKE_BTN, INPUT_PULLUP);
-    attachInterrupt(Pins::WAKE_BTN, wakeButtonISR, FALLING);
+void setup() {
+  // Disable unused radios to save significant power
+  WiFi.mode(WIFI_OFF);
+  btStop();
 
-    // Create system event queue
-    systemEventQueue = xQueueCreate(10, sizeof(SystemEvent));
-    if (systemEventQueue == nullptr) {
-        LOG_PRINTLN("[ERROR] Failed to create system event queue");
-    }
+  // Give serial a moment to initialize before beginning
+  delay(2000);
+  Serial.begin(115200);
+  // Wait for Serial to connect (up to 3 seconds) for easier debugging
+  while (!Serial && millis() < 5000)
+    ;
 
-    // Create keyboard task on core 0
-    BaseType_t result = xTaskCreatePinnedToCore(
-        keyboardTask,
-        "KeyboardTask",
-        2048,  // Stack size
-        nullptr,
-        1,     // Priority
-        nullptr,
-        0      // Core 0
-    );
-    
-    if (result != pdPASS) {
-        LOG_PRINTLN("[ERROR] Failed to create keyboard task");
-    }
+  delay(500);
+  LOG_PRINTLN("\n=== StikE Firmware Starting ===");
 
-    // Smoke-test drawing path to aid debugging UI rendering
+  LOG_PRINTLN("[Setup] Calling displayMgr.initBusesAndDisplays()...");
+  displayMgr.initBusesAndDisplays();
+  LOG_PRINTLN("[Setup] displayMgr.initBusesAndDisplays() returned");
+  delay(100); // Stabilization delay
+
+  LOG_PRINTLN("[Setup] Calling keyboardMgr.init()...");
+  keyboardMgr.init();
+  LOG_PRINTLN("[Setup] keyboardMgr.init() returned");
+  delay(100); // Stabilization delay
+
+  pinMode(Pins::WAKE_BTN, INPUT_PULLUP);
+  attachInterrupt(Pins::WAKE_BTN, wakeButtonISR, FALLING);
+
+  // Create system event queue
+  systemEventQueue = xQueueCreate(10, sizeof(SystemEvent));
+  if (systemEventQueue == nullptr) {
+    LOG_PRINTLN("[ERROR] Failed to create system event queue");
+  }
+
+  // Create keyboard task on core 0
+  BaseType_t result = xTaskCreatePinnedToCore(keyboardTask, "KeyboardTask",
+                                              2048, // Stack size
+                                              nullptr,
+                                              1, // Priority
+                                              nullptr,
+                                              0 // Core 0
+  );
+
+  if (result != pdPASS) {
+    LOG_PRINTLN("[ERROR] Failed to create keyboard task");
+  }
+
+  // Smoke-test drawing path to aid debugging UI rendering
 #ifdef STike_SYSTEM_TEST
-    Serial.println("[SYS_TEST] Triggering UI smoke test (MAGENTA)");
-    displayMgr.drawSmokeTest();
+  Serial.println("[SYS_TEST] Triggering UI smoke test (MAGENTA)");
+  displayMgr.drawSmokeTest();
 #endif
 
-// Also run a full-red screen diagnostic to ensure the end-to-end write path remains healthy
+// Also run a full-red screen diagnostic to ensure the end-to-end write path
+// remains healthy
 #ifdef STike_SYSTEM_TEST
-    Serial.println("[SYS_TEST] Triggering full-red screen diagnostic");
-    displayMgr.drawTestFullRed();
+  Serial.println("[SYS_TEST] Triggering full-red screen diagnostic");
+  displayMgr.drawTestFullRed();
 #endif
 
 // Direct diagnostic path: drawMagenta directly bypassing the sprite to confirm TFT path
 #ifdef STike_SYSTEM_TEST
-    Serial.println("[SYS_TEST] Triggering direct color frame (MAGENTA) bypass sprite");
-    displayMgr.drawDirectColorFrame(TFT_MAGENTA);
+  Serial.println(
+      "[SYS_TEST] Triggering direct color frame (MAGENTA) bypass sprite");
+  displayMgr.drawDirectColorFrame(TFT_MAGENTA);
 #endif
 
 // Simple sprite test - tiny sprite to verify sprite path works
 #ifdef STike_SYSTEM_TEST
-    Serial.println("[SYS_TEST] Triggering simple sprite test (64x32)");
-    displayMgr.drawActiveGUISimpleTest();
+  Serial.println("[SYS_TEST] Triggering simple sprite test (64x32)");
+  displayMgr.drawActiveGUISimpleTest();
 #endif
 
 // Tiny extra test to verify full-screen write path (red screen)
@@ -1643,11 +1962,11 @@ void loop() {
         }
     }
 
-    // Process animations
-    displayMgr.updateAnimations();
-    if (displayMgr.isAnimating()) {
-        uiDirty = true;
+    // A sleep transition mid-drain: stop processing immediately
+    if (currentState == SystemState::STATE_SLEEP) {
+      return;
     }
+  }
 
     // Only redraw when state has actually changed
     if (uiDirty) {
@@ -1696,8 +2015,25 @@ void loop() {
             default:
                 break;
         }
-        uiDirty = false;
+      }
+      break;
     }
+    case SystemState::STATE_UI_HELP:
+      displayMgr.drawHelpGUI(previousState);
+      break;
+    case SystemState::STATE_UI_QUICK_ADD:
+      displayMgr.drawQuickAddGUI(inputBuffer);
+      break;
+    case SystemState::STATE_UI_SETTINGS:
+      displayMgr.drawSettingsGUI(
+          settingsSelectedIndex, tftBrightness, autoSleepMinutes, wifiSSID,
+          wifiPassword, gcalURL, isEditingSetting, inputBuffer, isLowPowerMode);
+      break;
+    default:
+      break;
+    }
+    uiDirty = false;
+  }
 
     delay(isLowPowerMode ? 100 : 50);
 }
