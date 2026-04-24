@@ -212,8 +212,7 @@ void loadTasks() {
             char key[16];
             snprintf(key, sizeof(key), "task_%lu_title", i);
             String titleStr = prefs.getString(key, "");
-            strncpy(tasks[i].title, titleStr.c_str(), 31);
-            tasks[i].title[31] = '\0';
+            snprintf(tasks[i].title, sizeof(tasks[i].title), "%s", titleStr.c_str());
             
             snprintf(key, sizeof(key), "task_%lu_completed", i);
             tasks[i].isCompleted = prefs.getBool(key, false);
@@ -448,8 +447,7 @@ static void handleUIListEvent(const SystemEvent& event) {
                 if (selectedTaskIndex >= 0 && selectedTaskIndex < static_cast<int>(filteredTaskCount)) {
                     int realIdx = filteredTaskIndices[selectedTaskIndex];
                     LOG_PRINTF("[Input] E - opening Edit Task view for index %d\n", realIdx);
-                    strncpy(inputBuffer, tasks[realIdx].title, INPUT_BUFFER_SIZE - 1);
-                    inputBuffer[INPUT_BUFFER_SIZE - 1] = '\0';
+                    snprintf(inputBuffer, INPUT_BUFFER_SIZE, "%.*s", (int)sizeof(tasks[realIdx].title), tasks[realIdx].title);
                     inputBufferLen = strlen(inputBuffer);
                     taskEditField = 0;
                     taskEditHasDue = tasks[realIdx].hasDueDate;
@@ -704,8 +702,7 @@ static void handleUIEditTaskEvent(const SystemEvent& event) {
             save_edit:
                 if (inputBufferLen > 0 && selectedTaskIndex >= 0 && selectedTaskIndex < static_cast<int>(filteredTaskCount)) {
                     int realIdx = filteredTaskIndices[selectedTaskIndex];
-                    strncpy(tasks[realIdx].title, inputBuffer, 31);
-                    tasks[realIdx].title[31] = '\0';
+                    snprintf(tasks[realIdx].title, sizeof(tasks[realIdx].title), "%.*s", (int)INPUT_BUFFER_SIZE, inputBuffer);
                     tasks[realIdx].hasDueDate = taskEditHasDue;
                     tasks[realIdx].dueYear = taskEditYear;
                     tasks[realIdx].dueMonth = taskEditMonth;

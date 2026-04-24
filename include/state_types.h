@@ -93,8 +93,7 @@ struct TaskItem {
     TaskItem(const char* t, bool completed = false, uint32_t ts = 0, bool hasDue = false, uint16_t dy = 0, uint8_t dm = 0, uint8_t dd = 0, uint8_t dh = 0, uint8_t dmin = 0)
         : isCompleted(completed), timestamp(ts), completedYear(0), completedMonth(0), completedDay(0), hasDueDate(hasDue), dueYear(dy), dueMonth(dm), dueDay(dd), dueHour(dh), dueMinute(dmin) {
         if (t) {
-            strncpy(title, t, 31);
-            title[31] = '\0';
+            snprintf(title, sizeof(title), "%s", t);
         } else {
             title[0] = '\0';
         }
