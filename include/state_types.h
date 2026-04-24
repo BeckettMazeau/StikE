@@ -13,6 +13,7 @@ enum class SystemState {
     STATE_UI_EVENT_DETAIL,
     STATE_UI_HELP,
     STATE_UI_QUICK_ADD,
+    STATE_UI_SETTINGS,
     STATE_SLEEP,
     STATE_EPAPER_UPDATE
 };
@@ -93,8 +94,7 @@ struct TaskItem {
     TaskItem(const char* t, bool completed = false, uint32_t ts = 0, bool hasDue = false, uint16_t dy = 0, uint8_t dm = 0, uint8_t dd = 0, uint8_t dh = 0, uint8_t dmin = 0)
         : isCompleted(completed), timestamp(ts), completedYear(0), completedMonth(0), completedDay(0), hasDueDate(hasDue), dueYear(dy), dueMonth(dm), dueDay(dd), dueHour(dh), dueMinute(dmin) {
         if (t) {
-            strncpy(title, t, 31);
-            title[31] = '\0';
+            snprintf(title, sizeof(title), "%s", t);
         } else {
             title[0] = '\0';
         }
@@ -128,4 +128,4 @@ struct EpaperViewItem {
 
 constexpr uint32_t EPAPER_VIEW_COUNT = 10;
 constexpr uint64_t SLEEP_DURATION_US = 10 * 1000000ULL;
-constexpr uint32_t INPUT_BUFFER_SIZE = 32;
+constexpr uint32_t INPUT_BUFFER_SIZE = 128;

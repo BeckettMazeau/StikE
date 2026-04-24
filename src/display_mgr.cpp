@@ -4,6 +4,7 @@
 #include <LittleFS.h>
 #include <FS.h>
 #include "display_mgr.h"
+#include <algorithm>
 #include "state_types.h"
 #include "icons.h"
 
@@ -73,7 +74,7 @@ void DisplayManager::initBusesAndDisplays() {
     // 4. Initialize TFT and backlight
     Serial.println("[DisplayMgr] Init TFT...");
     pinMode(Pins::LCD_BL, OUTPUT);
-    digitalWrite(Pins::LCD_BL, HIGH);
+    analogWrite(Pins::LCD_BL, 255);
     
     tft.init();
     tft.setRotation(1);
@@ -130,14 +131,26 @@ void DisplayManager::turnOnTFT() {
     if (!tftOn) {
         // No more shared pin configuration needed - LCD_BL on GPIO 42 is dedicated
         tft.writecommand(ST7735_SLPOUT);
-        delay(120);  // Physical wake-up time for ST7735S
+        tftWakeTime = millis() + 120; // Physical wake-up time for ST7735S
         tftOn = true;
+    }
+}
+
+void DisplayManager::checkTFTWakeDelay() {
+    if (tftOn && tftWakeTime > 0) {
+        unsigned long now = millis();
+        if (now < tftWakeTime) {
+            delay(tftWakeTime - now);
+        }
+        tftWakeTime = 0; // Delay complete
     }
 }
 
 void DisplayManager::turnOffTFT() {
     if (tftOn) {
         tft.writecommand(ST7735_SLPIN);
+        // Explicitly switch to GPIO mode and pull to GND
+        pinMode(Pins::LCD_BL, OUTPUT);
         digitalWrite(Pins::LCD_BL, LOW);
         tftOn = false;
     }
@@ -168,26 +181,6 @@ bool isWithin24Hours(const CalendarEvent& ev, uint16_t curYear, uint8_t curMonth
     return false;
 }
 
-// Issue 4: Word-boundary-aware string truncation for ePaper display.
-// Copies at most maxChars of src into dst (including NUL), breaking at a word
-// boundary if the string is longer than maxChars. Appends "." if truncated.
-// dst must be at least maxChars+2 bytes.
-void truncateAtWord(char* dst, const char* src, int maxChars) {
-    int srcLen = strlen(src);
-    if (srcLen <= maxChars) {
-        strncpy(dst, src, maxChars + 1);
-        dst[maxChars] = '\0';
-        return;
-    }
-    // Find the last space at or before maxChars-1 (leave 1 char for '.')
-    int cutAt = maxChars - 1;
-    for (int i = cutAt; i > 0; i--) {
-        if (src[i] == ' ') { cutAt = i; break; }
-    }
-    strncpy(dst, src, cutAt);
-    dst[cutAt] = '.';
-    dst[cutAt + 1] = '\0';
-}
 }
 
 
@@ -210,29 +203,13 @@ void DisplayManager::prepareEpaperViews(const TaskItem tasks[], uint32_t taskCou
     }
 
     // Sort eligibleEvents by time (soonest first)
-    for (uint32_t i = 0; i < eligibleEventCount; i++) {
-        for (uint32_t j = i + 1; j < eligibleEventCount; j++) {
-            bool swap = false;
-            if (eligibleEvents[i].year > eligibleEvents[j].year) swap = true;
-            else if (eligibleEvents[i].year == eligibleEvents[j].year) {
-                if (eligibleEvents[i].month > eligibleEvents[j].month) swap = true;
-                else if (eligibleEvents[i].month == eligibleEvents[j].month) {
-                    if (eligibleEvents[i].day > eligibleEvents[j].day) swap = true;
-                    else if (eligibleEvents[i].day == eligibleEvents[j].day) {
-                        if (eligibleEvents[i].hour > eligibleEvents[j].hour) swap = true;
-                        else if (eligibleEvents[i].hour == eligibleEvents[j].hour) {
-                            if (eligibleEvents[i].minute > eligibleEvents[j].minute) swap = true;
-                        }
-                    }
-                }
-            }
-            if (swap) {
-                CalendarEvent tmp = eligibleEvents[i];
-                eligibleEvents[i] = eligibleEvents[j];
-                eligibleEvents[j] = tmp;
-            }
-        }
-    }
+    std::sort(eligibleEvents, eligibleEvents + eligibleEventCount, [](const CalendarEvent& a, const CalendarEvent& b) {
+        if (a.year != b.year) return a.year < b.year;
+        if (a.month != b.month) return a.month < b.month;
+        if (a.day != b.day) return a.day < b.day;
+        if (a.hour != b.hour) return a.hour < b.hour;
+        return a.minute < b.minute;
+    });
 
     // 2. Take maximum 2 soonest events
     uint32_t eventsToTake = (eligibleEventCount > 2) ? 2 : eligibleEventCount;
@@ -608,6 +585,7 @@ void DisplayManager::drawTestOverlay() {
 
 // Direct hardware color fill test (bypassing the sprite pipeline)
 void DisplayManager::drawDirectColorFrame(uint16_t color) {
+    checkTFTWakeDelay();
     // This is a direct write to the TFT to verify the bus can render a frame
     if (!guiSprite) {
         tft.fillScreen(color);
@@ -891,6 +869,7 @@ void DisplayManager::drawQuickAddGUI(const char* currentInput) {
 }
 
 void DisplayManager::clearFullHardwareScreen() {
+    checkTFTWakeDelay();
     tft.fillScreen(TFT_BLACK);
     forceFullRedraw();
 }
@@ -900,6 +879,8 @@ void DisplayManager::forceFullRedraw() {
 }
 
 void DisplayManager::pushDirtySprite(int x, int y) {
+    checkTFTWakeDelay();
+
     if (!guiSprite) return;
     
     int w = guiSprite->width();
@@ -1050,6 +1031,14 @@ void DisplayManager::drawCalendarGUI(CalendarView view, int year, int month, int
     int bodyH = H - HEADER_H - FOOTER_H - 4;
 
     if (view == CalendarView::MONTH) {
+        // Pre-calculate event counts for each day of the month to optimize traversal
+        uint8_t dailyEventCounts[32] = {0};
+        for (uint32_t e = 0; e < eventCount; e++) {
+            if (events[e].month == month && events[e].year == year && events[e].day >= 1 && events[e].day <= 31) {
+                dailyEventCounts[events[e].day]++;
+            }
+        }
+
         int cellW = W / 7;
         int cellH = bodyH / 5;
         int days = getDaysInMonth(year, month);
@@ -1060,10 +1049,7 @@ void DisplayManager::drawCalendarGUI(CalendarView view, int year, int month, int
             int y = bodyY + row * cellH;
             
             int dayNum = i + 1;
-            int dayEvents = 0;
-            for (uint32_t e = 0; e < eventCount; e++) {
-                if (events[e].day == dayNum && events[e].month == month && events[e].year == year) dayEvents++;
-            }
+            int dayEvents = dailyEventCounts[dayNum];
 
             if (dayNum == day) {
                 guiSprite->fillRect(x, y, cellW, cellH, TFT_WHITE);
@@ -1200,11 +1186,12 @@ void DisplayManager::drawEventDetailGUI(const CalendarEvent& event, int scrollOf
     curY += 10;
     // Wrap title if it exceeds maxChars (though it's only 24 chars, it might fit)
     {
-        int len = strlen(event.title);
+        int len = strnlen(event.title, sizeof(event.title));
         int pos = 0;
         while (pos < len || (pos == 0 && len == 0)) {
             char line[40];
             int take = (len - pos > maxChars) ? maxChars : (len - pos);
+            if (take > (int)sizeof(line) - 1) take = sizeof(line) - 1;
             strncpy(line, event.title + pos, take);
             line[take] = '\0';
             drawBodyText(4, curY, line, TFT_WHITE);
@@ -1228,11 +1215,12 @@ void DisplayManager::drawEventDetailGUI(const CalendarEvent& event, int scrollOf
     if (event.location[0]) {
         drawBodyText(4, curY, "Location:", TFT_YELLOW);
         curY += 10;
-        int len = strlen(event.location);
+        int len = strnlen(event.location, sizeof(event.location));
         int pos = 0;
         while (pos < len) {
             char line[40];
             int take = (len - pos > maxChars) ? maxChars : (len - pos);
+            if (take > (int)sizeof(line) - 1) take = sizeof(line) - 1;
             strncpy(line, event.location + pos, take);
             line[take] = '\0';
             drawBodyText(4, curY, line, TFT_WHITE);
@@ -1246,11 +1234,12 @@ void DisplayManager::drawEventDetailGUI(const CalendarEvent& event, int scrollOf
     if (event.notes[0]) {
         drawBodyText(4, curY, "Notes:", TFT_YELLOW);
         curY += 10;
-        int len = strlen(event.notes);
+        int len = strnlen(event.notes, sizeof(event.notes));
         int pos = 0;
         while (pos < len) {
             char line[64];
             int take = (len - pos > maxChars) ? maxChars : (len - pos);
+            if (take > (int)sizeof(line) - 1) take = sizeof(line) - 1;
             strncpy(line, event.notes + pos, take);
             line[take] = '\0';
             drawBodyText(4, curY, line, TFT_LIGHTGREY);
@@ -1411,3 +1400,119 @@ void DisplayManager::drawAddEventGUI(const char* title, int hour, int duration, 
 }
 
 
+
+void DisplayManager::setTFTBrightness(uint8_t brightness) {
+    if (brightness == 0) {
+        pinMode(Pins::LCD_BL, OUTPUT);
+        digitalWrite(Pins::LCD_BL, LOW);
+    } else {
+        analogWrite(Pins::LCD_BL, brightness);
+    }
+}
+
+void DisplayManager::drawSettingsGUI(int selectedItem, uint8_t brightness, uint16_t sleepTimeout, const char* wifiSSID, const char* wifiPassword, const char* gcalURL, bool isEditingSetting, const char* inputBuffer, bool isLowPowerMode) {
+    if (!tftOn) return;
+
+    guiSprite->fillSprite(TFT_BLACK);
+
+    // Title Bar
+    guiSprite->fillRect(0, 0, 160, 14, TFT_ORANGE);
+    guiSprite->setTextColor(TFT_BLACK);
+    guiSprite->setTextDatum(TL_DATUM);
+    guiSprite->drawString(" SYSTEM SETTINGS", 2, 3);
+
+    // Help hint
+    guiSprite->setTextColor(0x7BEF); // Light Gray
+    if (isEditingSetting) {
+        guiSprite->drawString("ENTER: Save  ESC: Cancel", 2, 114);
+    } else {
+        guiSprite->drawString("ESC: Exit  < >/ENTER", 2, 114);
+    }
+
+    guiSprite->setTextColor(TFT_WHITE);
+    guiSprite->setTextDatum(ML_DATUM);
+
+    // Settings Items
+    const int itemHeight = 16;
+    int startY = 24;
+
+    // We have 7 items now: Brightness, AutoSleep, Low Power, WiFi SSID, WiFi Pass, GCal URL, Sync Cal
+    int scrollOffset = 0;
+    if (selectedItem > 3) {
+        scrollOffset = (selectedItem - 3) * itemHeight;
+    }
+
+    const char* labels[] = {"Brightness", "AutoSleep", "Low Power", "WiFi SSID", "WiFi Pass", "GCal URL", "Sync Cal"};
+
+    for (int i = 0; i < 7; i++) {
+        int y = startY + (i * itemHeight) - scrollOffset;
+
+        if (y < 20 || y > 110) continue; // Skip drawing items outside the viewable area
+
+        if (i == selectedItem) {
+            guiSprite->fillRect(0, y - 8, 160, itemHeight, 0x3186); // Dark Gray
+            guiSprite->drawRect(0, y - 8, 160, itemHeight, TFT_ORANGE);
+            guiSprite->setTextColor(TFT_ORANGE);
+        } else {
+            guiSprite->setTextColor(TFT_WHITE);
+        }
+
+        guiSprite->drawString(labels[i], 5, y);
+
+        // Right-aligned values
+        guiSprite->setTextDatum(MR_DATUM);
+
+        char displayStr[128];
+        displayStr[0] = '\0';
+
+        if (i == 0) { // Brightness
+            snprintf(displayStr, sizeof(displayStr), "%d", brightness);
+        } else if (i == 1) { // AutoSleep
+            if (sleepTimeout == 0) {
+                snprintf(displayStr, sizeof(displayStr), "Never");
+            } else {
+                snprintf(displayStr, sizeof(displayStr), "%d min", sleepTimeout);
+            }
+        } else if (i == 2) { // Low Power
+            snprintf(displayStr, sizeof(displayStr), isLowPowerMode ? "ON" : "OFF");
+        } else if (i == 3) { // WiFi SSID
+            if (i == selectedItem && isEditingSetting) {
+                snprintf(displayStr, sizeof(displayStr), "%s_", inputBuffer);
+            } else {
+                snprintf(displayStr, sizeof(displayStr), "%s", wifiSSID);
+            }
+        } else if (i == 4) { // WiFi Pass
+            if (i == selectedItem && isEditingSetting) {
+                snprintf(displayStr, sizeof(displayStr), "%s_", inputBuffer);
+            } else {
+                int len = strlen(wifiPassword);
+                if (len > 0) {
+                    for(int p=0; p<len && p<8; p++) displayStr[p] = '*';
+                    displayStr[min(len, 8)] = '\0';
+                }
+            }
+        } else if (i == 5) { // GCal URL
+            if (i == selectedItem && isEditingSetting) {
+                snprintf(displayStr, sizeof(displayStr), "%s_", inputBuffer);
+            } else {
+                snprintf(displayStr, sizeof(displayStr), "%s", gcalURL);
+            }
+        } else if (i == 6) { // Sync Calendar
+            snprintf(displayStr, sizeof(displayStr), "Press ENTER");
+        }
+
+        // Truncate if it's too long to fit on screen
+        if (strlen(displayStr) > 12) {
+            char trunc[16];
+            strncpy(trunc, displayStr, 10);
+            trunc[10] = '.'; trunc[11] = '.'; trunc[12] = '\0';
+            guiSprite->drawString(trunc, 155, y);
+        } else {
+            guiSprite->drawString(displayStr, 155, y);
+        }
+
+        guiSprite->setTextDatum(ML_DATUM);
+    }
+
+    pushDirtySprite(0, 0);
+}
