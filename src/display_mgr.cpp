@@ -1200,11 +1200,12 @@ void DisplayManager::drawEventDetailGUI(const CalendarEvent& event, int scrollOf
     curY += 10;
     // Wrap title if it exceeds maxChars (though it's only 24 chars, it might fit)
     {
-        int len = strlen(event.title);
+        int len = strnlen(event.title, sizeof(event.title));
         int pos = 0;
         while (pos < len || (pos == 0 && len == 0)) {
             char line[40];
             int take = (len - pos > maxChars) ? maxChars : (len - pos);
+            if (take > (int)sizeof(line) - 1) take = sizeof(line) - 1;
             strncpy(line, event.title + pos, take);
             line[take] = '\0';
             drawBodyText(4, curY, line, TFT_WHITE);
@@ -1228,11 +1229,12 @@ void DisplayManager::drawEventDetailGUI(const CalendarEvent& event, int scrollOf
     if (event.location[0]) {
         drawBodyText(4, curY, "Location:", TFT_YELLOW);
         curY += 10;
-        int len = strlen(event.location);
+        int len = strnlen(event.location, sizeof(event.location));
         int pos = 0;
         while (pos < len) {
             char line[40];
             int take = (len - pos > maxChars) ? maxChars : (len - pos);
+            if (take > (int)sizeof(line) - 1) take = sizeof(line) - 1;
             strncpy(line, event.location + pos, take);
             line[take] = '\0';
             drawBodyText(4, curY, line, TFT_WHITE);
@@ -1246,11 +1248,12 @@ void DisplayManager::drawEventDetailGUI(const CalendarEvent& event, int scrollOf
     if (event.notes[0]) {
         drawBodyText(4, curY, "Notes:", TFT_YELLOW);
         curY += 10;
-        int len = strlen(event.notes);
+        int len = strnlen(event.notes, sizeof(event.notes));
         int pos = 0;
         while (pos < len) {
             char line[64];
             int take = (len - pos > maxChars) ? maxChars : (len - pos);
+            if (take > (int)sizeof(line) - 1) take = sizeof(line) - 1;
             strncpy(line, event.notes + pos, take);
             line[take] = '\0';
             drawBodyText(4, curY, line, TFT_LIGHTGREY);
