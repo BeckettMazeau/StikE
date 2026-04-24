@@ -26,7 +26,7 @@ public:
                             const CalendarEvent events[], uint32_t eventCount,
                             uint16_t curYear, uint8_t curMonth, uint8_t curDay, uint8_t curHour);
 
-    void drawActiveGUI(const TaskItem tasks[], uint32_t taskCount, int selectedIndex);
+    void drawActiveGUI(const TaskItem tasks[], uint32_t taskCount, int selectedIndex, int topIndex = 0, int viewMode = 0);
     void drawAddViewGUI(const char* currentInput, int activeField, bool hasDue, int y, int m, int d, int h, int min);
     void drawEditViewGUI(const char* currentInput, int activeField, bool hasDue, int y, int m, int d, int h, int min);
     void drawAlignGUI();

@@ -34,7 +34,19 @@ SystemState previousState = SystemState::STATE_UI_LIST;
 TaskItem tasks[MAX_TASKS];
 uint32_t taskCount = 0;
 int selectedTaskIndex = -1;
+int taskListTopIndex = 0;  // Top of the visible scroll window for the task list
+TaskViewMode currentTaskView = TaskViewMode::ACTIVE;
+int filteredTaskIndices[MAX_TASKS];
+int filteredTaskCount = 0;
 
+void updateFilteredTasks() {
+    filteredTaskCount = 0;
+    for (uint32_t i = 0; i < taskCount; i++) {
+        if (currentTaskView == TaskViewMode::ACTIVE && tasks[i].isCompleted) continue;
+        if (currentTaskView == TaskViewMode::COMPLETED && !tasks[i].isCompleted) continue;
+        filteredTaskIndices[filteredTaskCount++] = i;
+    }
+}
 // Add-task view input buffer
 char inputBuffer[INPUT_BUFFER_SIZE];
 uint32_t inputBufferLen = 0;
@@ -172,6 +184,15 @@ void saveTasks() {
         snprintf(key, sizeof(key), "task_%lu_timestamp", i);
         prefs.putUInt(key, tasks[i].timestamp);
 
+        snprintf(key, sizeof(key), "task_%lu_cpy", i);
+        prefs.putUShort(key, tasks[i].completedYear);
+
+        snprintf(key, sizeof(key), "task_%lu_cpm", i);
+        prefs.putUChar(key, tasks[i].completedMonth);
+
+        snprintf(key, sizeof(key), "task_%lu_cpd", i);
+        prefs.putUChar(key, tasks[i].completedDay);
+
         snprintf(key, sizeof(key), "task_%lu_hasdue", i);
         prefs.putBool(key, tasks[i].hasDueDate);
 
@@ -195,6 +216,15 @@ void saveTasks() {
     LOG_PRINTLN("[NVS] Tasks saved");
 }
 
+// Forward declaration - defined later in this file
+void removeLinkedEvent(uint32_t taskId);
+
+void cleanupOldCompletedTasks() {
+    // No-op: TaskItem does not store a completion date, so age-based cleanup
+    // is not possible without extending the struct. Reserved for future use.
+    (void)calYear; (void)calMonth; (void)calDay;
+}
+
 // Load tasks from NVS
 void loadTasks() {
     prefs.begin("stike", true);
@@ -213,6 +243,15 @@ void loadTasks() {
         
         snprintf(key, sizeof(key), "task_%lu_timestamp", i);
         tasks[i].timestamp = prefs.getUInt(key, 0);
+
+        snprintf(key, sizeof(key), "task_%lu_cpy", i);
+        tasks[i].completedYear = prefs.getUShort(key, 0);
+
+        snprintf(key, sizeof(key), "task_%lu_cpm", i);
+        tasks[i].completedMonth = prefs.getUChar(key, 0);
+
+        snprintf(key, sizeof(key), "task_%lu_cpd", i);
+        tasks[i].completedDay = prefs.getUChar(key, 0);
 
         snprintf(key, sizeof(key), "task_%lu_hasdue", i);
         tasks[i].hasDueDate = prefs.getBool(key, false);
@@ -235,6 +274,7 @@ void loadTasks() {
     
     prefs.end();
     LOG_PRINTF("[NVS] Loaded %u tasks\n", taskCount);
+    cleanupOldCompletedTasks();
 }
 
 // Add demo tasks (used when no saved tasks exist)
@@ -309,7 +349,10 @@ void wakeToActive() {
 
     displayMgr.turnOnTFT();
     currentState = SystemState::STATE_UI_LIST;
-    selectedTaskIndex = (taskCount > 0) ? 0 : -1;
+    currentTaskView = TaskViewMode::ACTIVE;
+    updateFilteredTasks();
+    selectedTaskIndex = (filteredTaskCount > 0) ? 0 : -1;
+    taskListTopIndex = 0;
     inputBuffer[0] = '\0';
     inputBufferLen = 0;
     uiDirty = true;
@@ -325,41 +368,72 @@ static void handleUIListEvent(const SystemEvent& event) {
         case SystemEventType::EVENT_NAV_UP:
             if (selectedTaskIndex > 0) {
                 selectedTaskIndex--;
+                if (selectedTaskIndex < taskListTopIndex) {
+                    taskListTopIndex = selectedTaskIndex;
+                }
                 uiDirty = true;
-            } else if (selectedTaskIndex < 0 && taskCount > 0) {
+            } else if (selectedTaskIndex < 0 && filteredTaskCount > 0) {
                 selectedTaskIndex = 0;
+                taskListTopIndex = 0;
                 uiDirty = true;
             }
             break;
 
         case SystemEventType::EVENT_NAV_DOWN:
-            if (selectedTaskIndex < static_cast<int>(taskCount) - 1) {
+            if (selectedTaskIndex < static_cast<int>(filteredTaskCount) - 1) {
                 selectedTaskIndex++;
                 uiDirty = true;
+                const int VISIBLE_ROWS = 9;
+                if (selectedTaskIndex >= taskListTopIndex + VISIBLE_ROWS) {
+                    taskListTopIndex = selectedTaskIndex - VISIBLE_ROWS + 1;
+                }
             }
             break;
 
         case SystemEventType::EVENT_SELECT:
             if (selectedTaskIndex >= 0 &&
-                selectedTaskIndex < static_cast<int>(taskCount)) {
-                tasks[selectedTaskIndex].isCompleted =
-                    !tasks[selectedTaskIndex].isCompleted;
-                LOG_PRINTF("[Input] Toggled task %d\n", selectedTaskIndex);
+                selectedTaskIndex < static_cast<int>(filteredTaskCount)) {
+                int realIdx = filteredTaskIndices[selectedTaskIndex];
+                tasks[realIdx].isCompleted = !tasks[realIdx].isCompleted;
+                if (tasks[realIdx].isCompleted) {
+                    tasks[realIdx].completedYear = calYear;
+                    tasks[realIdx].completedMonth = calMonth;
+                    tasks[realIdx].completedDay = calDay;
+                }
+                LOG_PRINTF("[Input] Toggled task (filtered %d) real %d\n", selectedTaskIndex, realIdx);
+                updateFilteredTasks();
+                if (selectedTaskIndex >= filteredTaskCount && filteredTaskCount > 0) {
+                    selectedTaskIndex = filteredTaskCount - 1;
+                } else if (filteredTaskCount == 0) {
+                    selectedTaskIndex = -1;
+                }
+                if (taskListTopIndex >= filteredTaskCount) {
+                    taskListTopIndex = filteredTaskCount > 0 ? filteredTaskCount - 1 : 0;
+                }
                 saveTasks();
                 uiDirty = true;
             }
             break;
 
         case SystemEventType::EVENT_BACKSPACE:
-            if (selectedTaskIndex >= 0 && selectedTaskIndex < static_cast<int>(taskCount)) {
-                LOG_PRINTF("[Input] Deleting task %d\n", selectedTaskIndex);
-                removeLinkedEvent(tasks[selectedTaskIndex].timestamp);
-                for (uint32_t i = selectedTaskIndex; i < taskCount - 1; ++i) {
+            if (selectedTaskIndex >= 0 && selectedTaskIndex < static_cast<int>(filteredTaskCount)) {
+                int realIdx = filteredTaskIndices[selectedTaskIndex];
+                LOG_PRINTF("[Input] Deleting task %d\n", realIdx);
+                removeLinkedEvent(tasks[realIdx].timestamp);
+                for (uint32_t i = realIdx; i < taskCount - 1; ++i) {
                     tasks[i] = tasks[i + 1];
                 }
                 taskCount--;
-                if (selectedTaskIndex >= static_cast<int>(taskCount)) {
-                    selectedTaskIndex = taskCount - 1;
+                updateFilteredTasks();
+                if (selectedTaskIndex >= static_cast<int>(filteredTaskCount) && filteredTaskCount > 0) {
+                    selectedTaskIndex = static_cast<int>(filteredTaskCount) - 1;
+                } else if (filteredTaskCount == 0) {
+                    selectedTaskIndex = -1;
+                }
+                // Clamp scroll window after deletion
+                if (taskListTopIndex > 0 && taskListTopIndex >= static_cast<int>(filteredTaskCount)) {
+                    taskListTopIndex = static_cast<int>(filteredTaskCount) - 1;
+                    if (taskListTopIndex < 0) taskListTopIndex = 0;
                 }
                 saveTasks();
                 uiDirty = true;
@@ -367,54 +441,79 @@ static void handleUIListEvent(const SystemEvent& event) {
             break;
 
         case SystemEventType::EVENT_TYPE_CHAR:
-            // 'n'/'N' opens Add Task view
+            // 'n'/'N' opens Add Task view (blocked when list is full)
             if (event.param == 'n' || event.param == 'N') {
-                LOG_PRINTLN("[Input] N - opening Add Task view");
-                inputBuffer[0] = '\0';
-                inputBufferLen = 0;
-                taskEditField = 0;
-                taskEditHasDue = false;
-                taskEditYear = calYear;
-                taskEditMonth = calMonth;
-                taskEditDay = calDay;
-                taskEditHour = 9;
-                taskEditMinute = 0;
-                currentState = SystemState::STATE_UI_ADD_TASK;
-                uiDirty = true;
+                if (taskCount >= MAX_TASKS) {
+                    // List is full — signal the UI to show feedback on next draw
+                    LOG_PRINTLN("[Input] N - task list full, cannot add");
+                    uiDirty = true; // Redraw so footer shows the "LIST FULL" status
+                } else {
+                    LOG_PRINTLN("[Input] N - opening Add Task view");
+                    inputBuffer[0] = '\0';
+                    inputBufferLen = 0;
+                    taskEditField = 0;
+                    taskEditHasDue = false;
+                    taskEditYear = calYear;
+                    taskEditMonth = calMonth;
+                    taskEditDay = calDay;
+                    taskEditHour = 9;
+                    taskEditMinute = 0;
+                    currentState = SystemState::STATE_UI_ADD_TASK;
+                    uiDirty = true;
+                }
             }
             // 'e'/'E' opens Edit Task view
             else if (event.param == 'e' || event.param == 'E') {
-                if (selectedTaskIndex >= 0 && selectedTaskIndex < static_cast<int>(taskCount)) {
-                    LOG_PRINTF("[Input] E - opening Edit Task view for index %d\n", selectedTaskIndex);
-                    strncpy(inputBuffer, tasks[selectedTaskIndex].title, INPUT_BUFFER_SIZE - 1);
+                if (selectedTaskIndex >= 0 && selectedTaskIndex < static_cast<int>(filteredTaskCount)) {
+                    int realIdx = filteredTaskIndices[selectedTaskIndex];
+                    LOG_PRINTF("[Input] E - opening Edit Task view for index %d\n", realIdx);
+                    strncpy(inputBuffer, tasks[realIdx].title, INPUT_BUFFER_SIZE - 1);
                     inputBuffer[INPUT_BUFFER_SIZE - 1] = '\0';
                     inputBufferLen = strlen(inputBuffer);
                     taskEditField = 0;
-                    taskEditHasDue = tasks[selectedTaskIndex].hasDueDate;
-                    taskEditYear = tasks[selectedTaskIndex].dueYear > 0 ? tasks[selectedTaskIndex].dueYear : calYear;
-                    taskEditMonth = tasks[selectedTaskIndex].dueMonth > 0 ? tasks[selectedTaskIndex].dueMonth : calMonth;
-                    taskEditDay = tasks[selectedTaskIndex].dueDay > 0 ? tasks[selectedTaskIndex].dueDay : calDay;
-                    taskEditHour = tasks[selectedTaskIndex].dueHour;
-                    taskEditMinute = tasks[selectedTaskIndex].dueMinute;
+                    taskEditHasDue = tasks[realIdx].hasDueDate;
+                    taskEditYear = tasks[realIdx].dueYear > 0 ? tasks[realIdx].dueYear : calYear;
+                    taskEditMonth = tasks[realIdx].dueMonth > 0 ? tasks[realIdx].dueMonth : calMonth;
+                    taskEditDay = tasks[realIdx].dueDay > 0 ? tasks[realIdx].dueDay : calDay;
+                    taskEditHour = tasks[realIdx].dueHour;
+                    taskEditMinute = tasks[realIdx].dueMinute;
                     currentState = SystemState::STATE_UI_EDIT_TASK;
                     uiDirty = true;
                 }
             }
             // 'd'/'D' deletes task
             else if (event.param == 'd' || event.param == 'D') {
-                if (selectedTaskIndex >= 0 && selectedTaskIndex < static_cast<int>(taskCount)) {
-                    LOG_PRINTF("[Input] D - deleting task %d\n", selectedTaskIndex);
-                    removeLinkedEvent(tasks[selectedTaskIndex].timestamp);
-                    for (uint32_t i = selectedTaskIndex; i < taskCount - 1; ++i) {
+                if (selectedTaskIndex >= 0 && selectedTaskIndex < static_cast<int>(filteredTaskCount)) {
+                    int realIdx = filteredTaskIndices[selectedTaskIndex];
+                    LOG_PRINTF("[Input] D - deleting task %d\n", realIdx);
+                    removeLinkedEvent(tasks[realIdx].timestamp);
+                    for (uint32_t i = realIdx; i < taskCount - 1; ++i) {
                         tasks[i] = tasks[i + 1];
                     }
                     taskCount--;
-                    if (selectedTaskIndex >= static_cast<int>(taskCount)) {
-                        selectedTaskIndex = taskCount - 1;
+                    updateFilteredTasks();
+                    if (selectedTaskIndex >= static_cast<int>(filteredTaskCount) && filteredTaskCount > 0) {
+                        selectedTaskIndex = static_cast<int>(filteredTaskCount) - 1;
+                    } else if (filteredTaskCount == 0) {
+                        selectedTaskIndex = -1;
+                    }
+                    // Clamp scroll window after deletion
+                    if (taskListTopIndex > 0 && taskListTopIndex >= static_cast<int>(filteredTaskCount)) {
+                        taskListTopIndex = static_cast<int>(filteredTaskCount) - 1;
+                        if (taskListTopIndex < 0) taskListTopIndex = 0;
                     }
                     saveTasks();
                     uiDirty = true;
                 }
+            }
+            else if (event.param == 'v' || event.param == 'V') {
+                if (currentTaskView == TaskViewMode::ACTIVE) currentTaskView = TaskViewMode::COMPLETED;
+                else if (currentTaskView == TaskViewMode::COMPLETED) currentTaskView = TaskViewMode::BOTH;
+                else currentTaskView = TaskViewMode::ACTIVE;
+                updateFilteredTasks();
+                selectedTaskIndex = (filteredTaskCount > 0) ? 0 : -1;
+                taskListTopIndex = 0;
+                uiDirty = true;
             }
             // 0x9A (Fn+A) opens Alignment Mode
             else if (event.param == 0x9A) {
@@ -520,7 +619,8 @@ static void handleUIAddTaskEvent(const SystemEvent& event) {
                     syncTaskToCalendar(tasks[taskCount]);
                     taskCount++;
                     LOG_PRINTF("[Input] Added task: %s\n", inputBuffer);
-                    if (selectedTaskIndex < 0) {
+                    updateFilteredTasks();
+                    if (selectedTaskIndex < 0 && filteredTaskCount > 0) {
                         selectedTaskIndex = 0;
                     }
                     saveTasks();
@@ -611,18 +711,19 @@ static void handleUIEditTaskEvent(const SystemEvent& event) {
                 uiDirty = true;
             } else {
             save_edit:
-                if (inputBufferLen > 0 && selectedTaskIndex >= 0 && selectedTaskIndex < static_cast<int>(taskCount)) {
-                    strncpy(tasks[selectedTaskIndex].title, inputBuffer, 31);
-                    tasks[selectedTaskIndex].title[31] = '\0';
-                    tasks[selectedTaskIndex].hasDueDate = taskEditHasDue;
-                    tasks[selectedTaskIndex].dueYear = taskEditYear;
-                    tasks[selectedTaskIndex].dueMonth = taskEditMonth;
-                    tasks[selectedTaskIndex].dueDay = taskEditDay;
-                    tasks[selectedTaskIndex].dueHour = taskEditHour;
-                    tasks[selectedTaskIndex].dueMinute = taskEditMinute;
+                if (inputBufferLen > 0 && selectedTaskIndex >= 0 && selectedTaskIndex < static_cast<int>(filteredTaskCount)) {
+                    int realIdx = filteredTaskIndices[selectedTaskIndex];
+                    strncpy(tasks[realIdx].title, inputBuffer, 31);
+                    tasks[realIdx].title[31] = '\0';
+                    tasks[realIdx].hasDueDate = taskEditHasDue;
+                    tasks[realIdx].dueYear = taskEditYear;
+                    tasks[realIdx].dueMonth = taskEditMonth;
+                    tasks[realIdx].dueDay = taskEditDay;
+                    tasks[realIdx].dueHour = taskEditHour;
+                    tasks[realIdx].dueMinute = taskEditMinute;
                     
-                    syncTaskToCalendar(tasks[selectedTaskIndex]);
-                    LOG_PRINTF("[Input] Edited task %d: %s\n", selectedTaskIndex, inputBuffer);
+                    syncTaskToCalendar(tasks[realIdx]);
+                    LOG_PRINTF("[Input] Edited task %d: %s\n", realIdx, inputBuffer);
                     saveTasks();
                 }
                 inputBuffer[0] = '\0';
@@ -1030,7 +1131,8 @@ void setup() {
 
     LOG_PRINTLN("[Setup] Entering UI_LIST state");
     currentState = SystemState::STATE_UI_LIST;
-    selectedTaskIndex = (taskCount > 0) ? 0 : -1;
+    updateFilteredTasks();
+    selectedTaskIndex = (filteredTaskCount > 0) ? 0 : -1;
     inputBuffer[0] = '\0';
     inputBufferLen = 0;
     uiDirty = true;
@@ -1098,9 +1200,14 @@ void loop() {
     // Only redraw when state has actually changed
     if (uiDirty) {
         switch (currentState) {
-            case SystemState::STATE_UI_LIST:
-                displayMgr.drawActiveGUI(tasks, taskCount, selectedTaskIndex);
+            case SystemState::STATE_UI_LIST: {
+                TaskItem displayTasks[MAX_TASKS];
+                for (int i=0; i<filteredTaskCount; i++) {
+                    displayTasks[i] = tasks[filteredTaskIndices[i]];
+                }
+                displayMgr.drawActiveGUI(displayTasks, filteredTaskCount, selectedTaskIndex, taskListTopIndex, static_cast<int>(currentTaskView));
                 break;
+            }
             case SystemState::STATE_UI_ADD_TASK:
                 displayMgr.drawAddViewGUI(inputBuffer, taskEditField, taskEditHasDue, taskEditYear, taskEditMonth, taskEditDay, taskEditHour, taskEditMinute);
                 break;

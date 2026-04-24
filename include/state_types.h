@@ -60,6 +60,12 @@ enum class SystemEventType {
     WAKE_REQ
 };
 
+enum class TaskViewMode {
+    ACTIVE,
+    COMPLETED,
+    BOTH
+};
+
 struct SystemEvent {
     SystemEventType type;
     int param;
@@ -69,6 +75,9 @@ struct TaskItem {
     char title[32];
     bool isCompleted;
     uint32_t timestamp;
+    uint16_t completedYear;
+    uint8_t completedMonth;
+    uint8_t completedDay;
     bool hasDueDate;
     uint16_t dueYear;
     uint8_t dueMonth;
@@ -76,11 +85,11 @@ struct TaskItem {
     uint8_t dueHour;
     uint8_t dueMinute;
 
-    TaskItem() : isCompleted(false), timestamp(0), hasDueDate(false), dueYear(0), dueMonth(0), dueDay(0), dueHour(0), dueMinute(0) {
+    TaskItem() : isCompleted(false), timestamp(0), completedYear(0), completedMonth(0), completedDay(0), hasDueDate(false), dueYear(0), dueMonth(0), dueDay(0), dueHour(0), dueMinute(0) {
         title[0] = '\0';
     }
     TaskItem(const char* t, bool completed = false, uint32_t ts = 0, bool hasDue = false, uint16_t dy = 0, uint8_t dm = 0, uint8_t dd = 0, uint8_t dh = 0, uint8_t dmin = 0)
-        : isCompleted(completed), timestamp(ts), hasDueDate(hasDue), dueYear(dy), dueMonth(dm), dueDay(dd), dueHour(dh), dueMinute(dmin) {
+        : isCompleted(completed), timestamp(ts), completedYear(0), completedMonth(0), completedDay(0), hasDueDate(hasDue), dueYear(dy), dueMonth(dm), dueDay(dd), dueHour(dh), dueMinute(dmin) {
         if (t) {
             strncpy(title, t, 31);
             title[31] = '\0';

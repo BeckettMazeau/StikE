@@ -104,6 +104,9 @@ void DisplayManager::turnOffTFT() {
 
 namespace {
 bool isWithin24Hours(const CalendarEvent& ev, uint16_t curYear, uint8_t curMonth, uint8_t curDay, uint8_t curHour) {
+    // Issue 10: If the system year is 2000 (sentinel — no real clock set), show all events.
+    if (curYear <= 2000) return true;
+
     // Very simplified "within 24 hours" check
     if (ev.year == curYear && ev.month == curMonth) {
         if (ev.day == curDay) {
@@ -123,7 +126,29 @@ bool isWithin24Hours(const CalendarEvent& ev, uint16_t curYear, uint8_t curMonth
     }
     return false;
 }
+
+// Issue 4: Word-boundary-aware string truncation for ePaper display.
+// Copies at most maxChars of src into dst (including NUL), breaking at a word
+// boundary if the string is longer than maxChars. Appends "." if truncated.
+// dst must be at least maxChars+2 bytes.
+void truncateAtWord(char* dst, const char* src, int maxChars) {
+    int srcLen = strlen(src);
+    if (srcLen <= maxChars) {
+        strncpy(dst, src, maxChars + 1);
+        dst[maxChars] = '\0';
+        return;
+    }
+    // Find the last space at or before maxChars-1 (leave 1 char for '.')
+    int cutAt = maxChars - 1;
+    for (int i = cutAt; i > 0; i--) {
+        if (src[i] == ' ') { cutAt = i; break; }
+    }
+    strncpy(dst, src, cutAt);
+    dst[cutAt] = '.';
+    dst[cutAt + 1] = '\0';
 }
+}
+
 
 void DisplayManager::prepareEpaperViews(const TaskItem tasks[], uint32_t taskCount,
                                         const CalendarEvent events[], uint32_t eventCount,
@@ -216,45 +241,65 @@ void DisplayManager::drawEpaperView(int index) {
     epd.setFullWindow();
     delay(100);
 
-    const int W = epd.width();
-    const int H = epd.height();
+    const int W = epd.width();   // 250 px (landscape)
+    const int H = epd.height();  // 122 px
+
+    // Layout constants (text size 2: each glyph ~12px wide, ~16px tall)
+    const int GLYPH_W = 12;
+    const int GLYPH_H = 16;
+    const int HEADER_Y = 4;
+    const int RULE_Y   = 22;
+    const int BODY_TOP = 26;           // First item baseline
+    const int ITEM_STRIDE = (H - BODY_TOP) / ITEMS_PER_EPAPER_SCREEN; // ~32 px
+    const int BOTTOM_GUARD = H - 4;   // Nothing should draw below this
 
     epd.firstPage();
     do {
         epd.fillScreen(GxEPD_WHITE);
-        
+
         // Header
         char header[32];
         snprintf(header, sizeof(header), "STIKE | %d/%u", index + 1, epaperViewCount);
-        epd.setCursor(10, 4);
+        epd.setCursor(10, HEADER_Y);
         epd.print(header);
-        epd.drawFastHLine(0, 20, W, GxEPD_BLACK);
+        epd.drawFastHLine(0, RULE_Y, W, GxEPD_BLACK);
 
         // Draw items
         for (int i = 0; i < view.itemCount; i++) {
             const EpaperItem& item = view.items[i];
-            int yItem = 25 + i * 26; // 25, 51, 77
+            int yItem = BODY_TOP + i * ITEM_STRIDE;
+
+            // Safety guard: stop rendering if we’d exceed the display height
+            if (yItem + GLYPH_H > BOTTOM_GUARD) break;
 
             epd.setCursor(10, yItem);
+
             if (item.type == EpaperViewType::TASK) {
-                char title[20];
-                strncpy(title, item.task.title, 18);
-                title[18] = '\0';
-                epd.printf("[ ] %s", title);
+                // Issue 3: No [ ] prefix. Use a dash bullet instead.
+                // Issue 4: Word-boundary truncation.
+                // Available width: W - 10 (left margin) - 10 (right margin) = 230 px
+                // Prefix "- " = 2 chars * GLYPH_W = 24 px, leaving 206 px = ~17 chars
+                const int maxTitleChars = (W - 20 - 2 * GLYPH_W) / GLYPH_W;
+                char truncTitle[24];
+                truncateAtWord(truncTitle, item.task.title, maxTitleChars);
+                epd.printf("- %s", truncTitle);
             } else {
-                char title[18];
-                strncpy(title, item.event.title, 16);
-                title[16] = '\0';
-                epd.printf("%02d:%02d %s", item.event.hour, item.event.minute, title);
+                // Event: "HH:MM Title"
+                // Prefix "HH:MM " = 6 chars * GLYPH_W = 72 px, leaving 158 px = ~13 chars
+                const int maxTitleChars = (W - 20 - 6 * GLYPH_W) / GLYPH_W;
+                char truncTitle[20];
+                truncateAtWord(truncTitle, item.event.title, maxTitleChars);
+                epd.printf("%02d:%02d %s", item.event.hour, item.event.minute, truncTitle);
             }
 
-            // Separator (only if not the last item on screen)
-            if (i < view.itemCount - 1) {
-                epd.drawFastHLine(10, yItem + 18, W - 20, GxEPD_BLACK);
+            // Separator (only if not the last item on screen, and won't clip)
+            int sepY = yItem + GLYPH_H + 2;
+            if (i < view.itemCount - 1 && sepY < BOTTOM_GUARD) {
+                epd.drawFastHLine(10, sepY, W - 20, GxEPD_BLACK);
             }
         }
     } while (epd.nextPage());
-    
+
     delay(500);
     epd.hibernate();
     delay(100);
@@ -273,26 +318,21 @@ namespace {
 constexpr int HEADER_H = 14;
 constexpr int FOOTER_H = 12;
 constexpr int LINE_H   = 12;
+// Body height = 128 - 14 - 12 = 102px. At LINE_H=12, floor(102/12) = 8 full rows + 6px spare.
+// We keep MAX_LIST_LINES at 8 for safety (avoids last row clipping into footer).
 constexpr int MAX_LIST_LINES = 8;
 }
 
-void DisplayManager::drawActiveGUI(const TaskItem tasks[], uint32_t taskCount, int selectedIndex) {
+void DisplayManager::drawActiveGUI(const TaskItem tasks[], uint32_t taskCount, int selectedIndex, int topIndex, int viewMode) {
     if (!guiSprite) {
         Serial.println("[SYS_TEST] drawActiveGUI: guiSprite is null, bailing");
         return;
     }
 
-    // Memory telemetry
-    Serial.printf("[SYS_TEST] drawActiveGUI: FreeHeap before operations = %u\n", ESP.getFreeHeap());
-
     const int W = guiSprite->width();
     const int H = guiSprite->height();
     const uint16_t headerBg = guiSprite->color565(0, 0, 90);
-
-    // Diagnostics: report entry into active GUI drawing and sprite size
-    Serial.println("[SYS_TEST] drawActiveGUI start");
-    Serial.printf("[SYS_TEST] sprite=%dx%d, headerBg=0x%04X, taskCount=%u, selectedIndex=%d\n",
-                  W, H, headerBg, taskCount, selectedIndex);
+    const bool listFull = (taskCount >= MAX_TASKS);
 
     guiSprite->fillSprite(TFT_BLACK);
     guiSprite->setTextSize(1);
@@ -301,31 +341,59 @@ void DisplayManager::drawActiveGUI(const TaskItem tasks[], uint32_t taskCount, i
     guiSprite->fillRect(0, 0, W, HEADER_H, headerBg);
     guiSprite->setTextColor(TFT_WHITE, headerBg);
     guiSprite->setCursor(4, 3);
-    guiSprite->print("== STIKE ==");
+    if (taskCount > 0) {
+        char hdr[24];
+        const char* modeStr = (viewMode == 0) ? "ACT" : ((viewMode == 1) ? "CMP" : "ALL");
+        snprintf(hdr, sizeof(hdr), "%s %u/%u", modeStr, (unsigned)(selectedIndex + 1), (unsigned)taskCount);
+        guiSprite->print(hdr);
+    } else {
+        const char* modeStr = (viewMode == 0) ? "ACTIVE" : ((viewMode == 1) ? "COMPLETED" : "ALL");
+        guiSprite->printf("== %s ==", modeStr);
+    }
 
-    // --- Body: up to MAX_LIST_LINES tasks ---
-    int shown = (taskCount < static_cast<uint32_t>(MAX_LIST_LINES))
-                    ? static_cast<int>(taskCount)
-                    : MAX_LIST_LINES;
-    for (int i = 0; i < shown; ++i) {
-        int y = HEADER_H + 2 + i * LINE_H;
+    // --- Scroll indicators (drawn in header right margin) ---
+    if (topIndex > 0) {
+        // More items above
+        guiSprite->setTextColor(TFT_YELLOW, headerBg);
+        guiSprite->setCursor(W - 10, 3);
+        guiSprite->print('^');
+    }
+    bool moreBelow = (static_cast<int>(taskCount) > topIndex + MAX_LIST_LINES);
+    if (moreBelow) {
+        // More items below — draw in body area top-right to remain visible
+        guiSprite->setTextColor(TFT_YELLOW, TFT_BLACK);
+        guiSprite->setCursor(W - 10, HEADER_H + 2);
+        guiSprite->print('v');
+    }
+
+    // --- Body: render the scroll window [topIndex .. topIndex+MAX_LIST_LINES) ---
+    int windowEnd = topIndex + MAX_LIST_LINES;
+    if (windowEnd > static_cast<int>(taskCount)) windowEnd = static_cast<int>(taskCount);
+
+    for (int i = topIndex; i < windowEnd; ++i) {
+        int row = i - topIndex;
+        int y = HEADER_H + 2 + row * LINE_H;
         bool selected = (i == selectedIndex);
 
+        // Build display line; title truncated to fit within the row width.
+        // With textSize=1, each char is 6px wide. Row width W minus checkbox prefix (4 chars = 24px)
+        // and optional due-date suffix (14 chars = 84px) leaves ~8 chars for title with due,
+        // or 24 chars without. We format conservatively.
         char line[40];
         if (tasks[i].hasDueDate) {
             snprintf(line, sizeof(line), "[%c] %.10s %02d/%02d %02d:%02d",
-                     tasks[i].isCompleted ? 'x' : ' ', tasks[i].title, tasks[i].dueMonth, tasks[i].dueDay, tasks[i].dueHour, tasks[i].dueMinute);
+                     tasks[i].isCompleted ? 'x' : ' ',
+                     tasks[i].title,
+                     tasks[i].dueMonth, tasks[i].dueDay,
+                     tasks[i].dueHour, tasks[i].dueMinute);
         } else {
-            snprintf(line, sizeof(line), "[%c] %.28s",
-                     tasks[i].isCompleted ? 'x' : ' ', tasks[i].title);
+            snprintf(line, sizeof(line), "[%c] %.24s",
+                     tasks[i].isCompleted ? 'x' : ' ',
+                     tasks[i].title);
         }
-        // Additional runtime diagnostic of what we're drawing for each list item
-        Serial.printf("[SYS_TEST] draw line %d: title='%s', completed=%d, line='%s'\n",
-                      i, tasks[i].title, tasks[i].isCompleted ? 1 : 0, line);
 
         if (selected) {
-            // Inverted colors for the selected row
-            guiSprite->fillRect(0, y - 1, W, LINE_H, TFT_WHITE);
+            guiSprite->fillRect(0, y - 1, W - 12, LINE_H, TFT_WHITE);
             guiSprite->setTextColor(TFT_BLACK, TFT_WHITE);
         } else {
             guiSprite->setTextColor(TFT_WHITE, TFT_BLACK);
@@ -337,15 +405,22 @@ void DisplayManager::drawActiveGUI(const TaskItem tasks[], uint32_t taskCount, i
     if (taskCount == 0) {
         guiSprite->setTextColor(TFT_LIGHTGREY, TFT_BLACK);
         guiSprite->setCursor(4, HEADER_H + 8);
-        guiSprite->print("(No tasks. Press N)");
+        guiSprite->print("No tasks – press N");
     }
 
     // --- Footer ---
+    const uint16_t footerBg = listFull ? guiSprite->color565(90, 0, 0) : headerBg;
+    guiSprite->fillRect(0, H - FOOTER_H, W, FOOTER_H, footerBg);
+    guiSprite->setTextColor(TFT_WHITE, footerBg);
+    guiSprite->setCursor(4, H - FOOTER_H + 2);
+    if (listFull) {
+        guiSprite->print("LIST FULL (max 20)");
+    } else {
+        guiSprite->print("N:New E:Edit D:Del");
+    }
 
-// End of UI draw: push to screen
-    Serial.println("[SYS_TEST] drawActiveGUI end, about to pushSprite");
     guiSprite->pushSprite(offsetX, offsetY);
-    Serial.printf("[SYS_TEST] drawActiveGUI pushSprite complete, FreeHeap after = %u\n", ESP.getFreeHeap());
+    Serial.printf("[GUI] drawActiveGUI: top=%d sel=%d count=%u\n", topIndex, selectedIndex, taskCount);
 }
 
 void DisplayManager::drawSmokeTest() {
@@ -456,10 +531,18 @@ void DisplayManager::drawAddViewGUI(const char* currentInput, int activeField, b
     guiSprite->setCursor(4, curY);
     guiSprite->print("Title:");
     curY += 10;
-    guiSprite->fillRect(4, curY, W - 8, 12, activeField == 0 ? TFT_WHITE : TFT_DARKGREY);
-    guiSprite->setTextColor(activeField == 0 ? TFT_BLACK : TFT_WHITE, activeField == 0 ? TFT_WHITE : TFT_DARKGREY);
-    guiSprite->setCursor(6, curY + 2);
-    guiSprite->printf("%s%s", currentInput, activeField == 0 ? "_" : "");
+    // Title input box — show only the last N chars so the cursor stays visible.
+    // textSize=1: each glyph is 6px wide. Box inner width = (W-14)px.
+    {
+        int maxVisible = (W - 14) / 6;  // e.g. (152/6) = 25 visible chars
+        const char* displayStr = currentInput;
+        int inputLen = strlen(currentInput);
+        if (inputLen > maxVisible) displayStr = currentInput + (inputLen - maxVisible);
+        guiSprite->fillRect(4, curY, W - 8, 12, activeField == 0 ? TFT_WHITE : TFT_DARKGREY);
+        guiSprite->setTextColor(activeField == 0 ? TFT_BLACK : TFT_WHITE, activeField == 0 ? TFT_WHITE : TFT_DARKGREY);
+        guiSprite->setCursor(6, curY + 2);
+        guiSprite->printf("%s%s", displayStr, activeField == 0 ? "_" : "");
+    }
     curY += 18;
 
     // Field 1: Has Due Date
@@ -544,11 +627,19 @@ void DisplayManager::drawEditViewGUI(const char* currentInput, int activeField, 
     guiSprite->setCursor(4, curY);
     guiSprite->print("Title:");
     curY += 10;
-    guiSprite->fillRect(4, curY, W - 8, 12, activeField == 0 ? TFT_WHITE : TFT_DARKGREY);
-    guiSprite->setTextColor(activeField == 0 ? TFT_BLACK : TFT_WHITE, activeField == 0 ? TFT_WHITE : TFT_DARKGREY);
-    guiSprite->setCursor(6, curY + 2);
-    guiSprite->printf("%s%s", currentInput, activeField == 0 ? "_" : "");
+    // Title input box — show only the last N chars so the cursor stays visible.
+    {
+        int maxVisible = (W - 14) / 6;
+        const char* displayStr = currentInput;
+        int inputLen = strlen(currentInput);
+        if (inputLen > maxVisible) displayStr = currentInput + (inputLen - maxVisible);
+        guiSprite->fillRect(4, curY, W - 8, 12, activeField == 0 ? TFT_WHITE : TFT_DARKGREY);
+        guiSprite->setTextColor(activeField == 0 ? TFT_BLACK : TFT_WHITE, activeField == 0 ? TFT_WHITE : TFT_DARKGREY);
+        guiSprite->setCursor(6, curY + 2);
+        guiSprite->printf("%s%s", displayStr, activeField == 0 ? "_" : "");
+    }
     curY += 18;
+
 
     // Field 1: Has Due Date
     guiSprite->setTextColor(TFT_WHITE, TFT_BLACK);
@@ -848,6 +939,9 @@ void DisplayManager::drawEventDetailGUI(const CalendarEvent& event) {
     const int H = guiSprite->height();
     const uint16_t headerBg = guiSprite->color565(0, 60, 0);
 
+    // textSize=1: glyph width = 6px. Max chars fitting in W-8 px.
+    const int maxChars = (W - 8) / 6;
+
     guiSprite->fillSprite(TFT_BLACK);
     guiSprite->setTextSize(1);
 
@@ -858,15 +952,19 @@ void DisplayManager::drawEventDetailGUI(const CalendarEvent& event) {
     guiSprite->print("EVENT DETAILS");
 
     int y = HEADER_H + 10;
+
+    // Title (clamped)
     guiSprite->setTextColor(TFT_YELLOW, TFT_BLACK);
     guiSprite->setCursor(4, y);
     guiSprite->print("Title:");
     y += 10;
     guiSprite->setTextColor(TFT_WHITE, TFT_BLACK);
     guiSprite->setCursor(4, y);
-    guiSprite->print(event.title);
-    y += 20;
+    char titleBuf[32]; snprintf(titleBuf, maxChars + 1, "%s", event.title);
+    guiSprite->print(titleBuf);
+    y += 14;
 
+    // Time
     guiSprite->setTextColor(TFT_YELLOW, TFT_BLACK);
     guiSprite->setCursor(4, y);
     guiSprite->print("Time:");
@@ -874,25 +972,48 @@ void DisplayManager::drawEventDetailGUI(const CalendarEvent& event) {
     guiSprite->setTextColor(TFT_WHITE, TFT_BLACK);
     guiSprite->setCursor(4, y);
     int endMin = (event.hour * 60 + event.minute + event.duration);
-    guiSprite->printf("%02d:%02d - %02d:%02d", event.hour, event.minute, (endMin / 60) % 24, endMin % 60);
-    y += 20;
+    guiSprite->printf("%02d:%02d - %02d:%02d (%dmin)", event.hour, event.minute, (endMin / 60) % 24, endMin % 60, event.duration);
+    y += 14;
 
-    guiSprite->setTextColor(TFT_YELLOW, TFT_BLACK);
-    guiSprite->setCursor(4, y);
-    guiSprite->print("Location:");
-    y += 10;
-    guiSprite->setTextColor(TFT_WHITE, TFT_BLACK);
-    guiSprite->setCursor(4, y);
-    guiSprite->print(event.location[0] ? event.location : "N/A");
-    y += 20;
+    // Location (clamped)
+    if (event.location[0]) {
+        guiSprite->setTextColor(TFT_YELLOW, TFT_BLACK);
+        guiSprite->setCursor(4, y);
+        guiSprite->print("Loc:");
+        y += 10;
+        guiSprite->setTextColor(TFT_WHITE, TFT_BLACK);
+        guiSprite->setCursor(4, y);
+        char locBuf[32]; snprintf(locBuf, maxChars + 1, "%s", event.location);
+        guiSprite->print(locBuf);
+        y += 14;
+    }
 
-    guiSprite->setTextColor(TFT_YELLOW, TFT_BLACK);
-    guiSprite->setCursor(4, y);
-    guiSprite->print("Notes:");
-    y += 10;
-    guiSprite->setTextColor(TFT_WHITE, TFT_BLACK);
-    guiSprite->setCursor(4, y);
-    guiSprite->print(event.notes[0] ? event.notes : "N/A");
+    // Notes (clamped to 2 lines)
+    if (event.notes[0] && y + 24 < H) {
+        guiSprite->setTextColor(TFT_YELLOW, TFT_BLACK);
+        guiSprite->setCursor(4, y);
+        guiSprite->print("Notes:");
+        y += 10;
+        guiSprite->setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+        // Line 1
+        char noteLine[32];
+        snprintf(noteLine, maxChars + 1, "%s", event.notes);
+        guiSprite->setCursor(4, y);
+        guiSprite->print(noteLine);
+        // Line 2 if notes are longer and space permits
+        if ((int)strlen(event.notes) > maxChars && y + 10 < H - 2) {
+            y += 10;
+            snprintf(noteLine, maxChars + 1, "%s", event.notes + maxChars);
+            guiSprite->setCursor(4, y);
+            guiSprite->print(noteLine);
+        }
+    }
+
+    // Footer hint
+    guiSprite->fillRect(0, H - FOOTER_H, W, FOOTER_H, headerBg);
+    guiSprite->setTextColor(TFT_WHITE, headerBg);
+    guiSprite->setCursor(4, H - FOOTER_H + 2);
+    guiSprite->print("BS:Back");
 
     guiSprite->pushSprite(offsetX, offsetY);
 }
