@@ -73,7 +73,7 @@ void DisplayManager::initBusesAndDisplays() {
     // 4. Initialize TFT and backlight
     Serial.println("[DisplayMgr] Init TFT...");
     pinMode(Pins::LCD_BL, OUTPUT);
-    digitalWrite(Pins::LCD_BL, HIGH);
+    analogWrite(Pins::LCD_BL, 255);
     
     tft.init();
     tft.setRotation(1);
@@ -138,6 +138,8 @@ void DisplayManager::turnOnTFT() {
 void DisplayManager::turnOffTFT() {
     if (tftOn) {
         tft.writecommand(ST7735_SLPIN);
+        // Explicitly switch to GPIO mode and pull to GND
+        pinMode(Pins::LCD_BL, OUTPUT);
         digitalWrite(Pins::LCD_BL, LOW);
         tftOn = false;
     }
@@ -1413,7 +1415,12 @@ void DisplayManager::drawAddEventGUI(const char* title, int hour, int duration, 
 
 
 void DisplayManager::setTFTBrightness(uint8_t brightness) {
-    analogWrite(Pins::LCD_BL, brightness);
+    if (brightness == 0) {
+        pinMode(Pins::LCD_BL, OUTPUT);
+        digitalWrite(Pins::LCD_BL, LOW);
+    } else {
+        analogWrite(Pins::LCD_BL, brightness);
+    }
 }
 
 void DisplayManager::drawSettingsGUI(int selectedItem, uint8_t brightness, uint16_t sleepTimeout, bool isLowPowerMode) {
