@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <esp_sleep.h>
+#include <WiFi.h>
 #include <esp_log.h>
 #include <Preferences.h>
 #include <freertos/FreeRTOS.h>
@@ -10,6 +11,7 @@
 #include "state_types.h"
 #include "display_mgr.h"
 #include "keyboard_mgr.h"
+#include "power_mgr.h"
 
 // TEST_START: Systems Test
 #ifdef STike_SYSTEM_TEST
@@ -38,6 +40,19 @@ int taskListTopIndex = 0;  // Top of the visible scroll window for the task list
 TaskViewMode currentTaskView = TaskViewMode::ACTIVE;
 int filteredTaskIndices[MAX_TASKS];
 int filteredTaskCount = 0;
+
+// Global low power mode flag
+bool isLowPowerMode = false;
+
+// Toggle low power mode
+void setLowPowerMode(bool enable) {
+    isLowPowerMode = enable;
+    if (enable) {
+        setCpuFrequencyMhz(80);
+    } else {
+        setCpuFrequencyMhz(240);
+    }
+}
 
 void updateFilteredTasks() {
     filteredTaskCount = 0;
@@ -172,7 +187,7 @@ void keyboardTask(void* parameter) {
                 }
             }
         }
-        vTaskDelay(pdMS_TO_TICKS(10)); // 10ms polling interval
+        vTaskDelay(pdMS_TO_TICKS(isLowPowerMode ? 50 : 10)); // 10ms polling interval, 50ms in low power
     }
 }
 
@@ -187,6 +202,7 @@ void saveTasks() {
     // Save settings
     prefs.putUChar("brightness", tftBrightness);
     prefs.putUShort("autoSleep", autoSleepMinutes);
+    prefs.putBool("lowPower", isLowPowerMode);
     
     prefs.end();
     LOG_PRINTLN("[NVS] Tasks and settings saved as blob");
@@ -209,6 +225,8 @@ void loadTasks() {
     // Load Settings
     tftBrightness = prefs.getUChar("brightness", 255);
     autoSleepMinutes = prefs.getUShort("autoSleep", 5);
+    isLowPowerMode = prefs.getBool("lowPower", false);
+    setLowPowerMode(isLowPowerMode);
     displayMgr.setTFTBrightness(tftBrightness);
 
     if (taskCount > MAX_TASKS) taskCount = MAX_TASKS;
@@ -1121,7 +1139,7 @@ static void handleUISettingsEvent(const SystemEvent& event) {
             break;
 
         case SystemEventType::EVENT_NAV_DOWN:
-            if (settingsSelectedIndex < 1) { // We have 2 settings: 0=Brightness, 1=AutoSleep
+            if (settingsSelectedIndex < 2) { // We have 3 settings: 0=Brightness, 1=AutoSleep, 2=LowPower
                 settingsSelectedIndex++;
                 uiDirty = true;
             }
@@ -1136,6 +1154,10 @@ static void handleUISettingsEvent(const SystemEvent& event) {
             } else if (settingsSelectedIndex == 1) { // AutoSleep
                 if (autoSleepMinutes > 0) autoSleepMinutes--;
                 uiDirty = true;
+            } else if (settingsSelectedIndex == 2) { // LowPower
+                isLowPowerMode = false;
+                setLowPowerMode(isLowPowerMode);
+                uiDirty = true;
             }
             break;
 
@@ -1147,6 +1169,10 @@ static void handleUISettingsEvent(const SystemEvent& event) {
                 uiDirty = true;
             } else if (settingsSelectedIndex == 1) { // AutoSleep
                 if (autoSleepMinutes < 60) autoSleepMinutes++;
+                uiDirty = true;
+            } else if (settingsSelectedIndex == 2) { // LowPower
+                isLowPowerMode = true;
+                setLowPowerMode(isLowPowerMode);
                 uiDirty = true;
             }
             break;
@@ -1255,6 +1281,10 @@ void handleSleepState() {
 }
 
 void setup() {
+    // Disable unused radios to save significant power
+    WiFi.mode(WIFI_OFF);
+    btStop();
+
     // Give serial a moment to initialize before beginning
     delay(2000); 
     Serial.begin(115200);
@@ -1472,7 +1502,7 @@ void loop() {
                 displayMgr.drawQuickAddGUI(inputBuffer);
                 break;
             case SystemState::STATE_UI_SETTINGS:
-                displayMgr.drawSettingsGUI(settingsSelectedIndex, tftBrightness, autoSleepMinutes);
+                displayMgr.drawSettingsGUI(settingsSelectedIndex, tftBrightness, autoSleepMinutes, isLowPowerMode);
                 break;
             default:
                 break;
@@ -1480,5 +1510,5 @@ void loop() {
         uiDirty = false;
     }
 
-    delay(50);
+    delay(isLowPowerMode ? 100 : 50);
 }

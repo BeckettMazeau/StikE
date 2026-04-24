@@ -1416,7 +1416,7 @@ void DisplayManager::setTFTBrightness(uint8_t brightness) {
     analogWrite(Pins::LCD_BL, brightness);
 }
 
-void DisplayManager::drawSettingsGUI(int selectedItem, uint8_t brightness, uint16_t sleepTimeout) {
+void DisplayManager::drawSettingsGUI(int selectedItem, uint8_t brightness, uint16_t sleepTimeout, bool isLowPowerMode) {
     if (!tftOn) return;
 
     guiSprite->fillSprite(TFT_BLACK);
@@ -1438,7 +1438,7 @@ void DisplayManager::drawSettingsGUI(int selectedItem, uint8_t brightness, uint1
     const int itemHeight = 20;
     const int startY = 30;
 
-    for (int i = 0; i < 2; i++) {
+    for (int i = 0; i < 3; i++) {
         int y = startY + (i * itemHeight);
 
         if (i == selectedItem) {
@@ -1456,7 +1456,7 @@ void DisplayManager::drawSettingsGUI(int selectedItem, uint8_t brightness, uint1
             guiSprite->setTextDatum(MR_DATUM);
             guiSprite->drawString(valStr, 155, y);
             guiSprite->setTextDatum(ML_DATUM);
-        } else if (i == 1) {
+                } else if (i == 1) {
             guiSprite->drawString("Auto-Sleep", 5, y);
             char valStr[16];
             if (sleepTimeout == 0) {
@@ -1466,6 +1466,11 @@ void DisplayManager::drawSettingsGUI(int selectedItem, uint8_t brightness, uint1
             }
             guiSprite->setTextDatum(MR_DATUM);
             guiSprite->drawString(valStr, 155, y);
+            guiSprite->setTextDatum(ML_DATUM);
+        } else if (i == 2) {
+            guiSprite->drawString("Low Power", 5, y);
+            guiSprite->setTextDatum(MR_DATUM);
+            guiSprite->drawString(isLowPowerMode ? "On" : "Off", 155, y);
             guiSprite->setTextDatum(ML_DATUM);
         }
     }
