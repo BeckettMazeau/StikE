@@ -332,11 +332,13 @@ void parseNaturalLanguageTime(const char* title, int& hour) {
     
     if (ptr == endPtr) return; // No number found
     
-    // Check for am/pm
+    // Check for am/pm with explicit bounds check
     bool isPm = false;
     bool isAm = false;
-    if (strncasecmp(endPtr, "pm", 2) == 0) isPm = true;
-    else if (strncasecmp(endPtr, "am", 2) == 0) isAm = true;
+    if (endPtr[0] != '\0' && endPtr[1] != '\0') {
+        if (strncasecmp(endPtr, "pm", 2) == 0) isPm = true;
+        else if (strncasecmp(endPtr, "am", 2) == 0) isAm = true;
+    }
     
     if (isPm && val < 12) val += 12;
     else if (isAm && val == 12) val = 0;
