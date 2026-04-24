@@ -23,50 +23,65 @@ DisplayManager::~DisplayManager() {
     }
 }
 
-void DisplayManager::initTFT() {
-    Serial.println("[DisplayMgr] initTFT: Starting TFT_eSPI initialization");
+void DisplayManager::initBusesAndDisplays() {
+    // === ePaper: Complete ALL ePaper work before touching TFT ===
+    // The TFT's HSPI init can disrupt the FSPI bus state on ESP32-S3,
+    // so we must finish all ePaper SPI transactions first.
+
+    // 1. Initialize ePaper SPI bus and driver
+    Serial.println("[DisplayMgr] Init ePaper SPI...");
+    SPI.begin(Pins::EP_SCK, -1, Pins::EP_MOSI, Pins::EP_CS);
+    delay(100);
+    epd.init(115200, true, 10, false, SPI, SPISettings(4000000, MSBFIRST, SPI_MODE0));
+    delay(200);
+    epd.setRotation(1);
+    epd.setTextColor(GxEPD_BLACK);
+    epd.setFullWindow();
+    delay(100);
+
+    // 2. Draw initial ePaper content while SPI bus is still pristine
+    Serial.println("[DisplayMgr] Drawing initial ePaper screen...");
+    epd.firstPage();
+    do {
+        epd.fillScreen(GxEPD_WHITE);
+        epd.setCursor(10, 50);
+        epd.setTextSize(2);
+        epd.print("StikE Initialized");
+    } while (epd.nextPage());
+
+    // 3. Hibernate ePaper — done with FSPI until sleep mode
+    // Give the ePaper controller enough time to finish the waveform before powering down.
+    delay(2000); // extended settle time
+    Serial.println("[DisplayMgr] Hibernating ePaper...");
+    epd.hibernate();
+    delay(100);
+
+    // === TFT: Now safe to initialize HSPI for the TFT ===
+
+    // 4. Initialize TFT and backlight
+    Serial.println("[DisplayMgr] Init TFT...");
+    pinMode(Pins::LCD_BL, OUTPUT);
+    digitalWrite(Pins::LCD_BL, HIGH);
     
-    // Let TFT_eSPI handle the SPI bus initialization entirely via User_Setup.h
     tft.init();
     tft.setRotation(1);
-    // TFT_eSPI base ctor leaves gfxFont uninitialized; with LOAD_GFXFF defined,
-    // write() dereferences it unless we force-clear via setTextFont(1).
     tft.setTextFont(1);
+    tft.fillScreen(TFT_BLACK); // Clear entire GRAM including edge pixels
     tftOn = true;
 
-    // --- HARDWARE PROOF START ---
-    tft.fillScreen(TFT_RED);
-    delay(500);
-    tft.fillScreen(TFT_GREEN);
-    delay(500);
-    tft.fillScreen(TFT_BLACK);
-    // --- HARDWARE PROOF END ---
-    
-    Serial.println("[DisplayMgr] Creating sprite...");
+    // 5. Create GUI sprite – allocate with dimensions matching the visible area after rotation (width=128, height=160)
+    Serial.println("[DisplayMgr] Creating GUI sprite...");
     guiSprite = new TFT_eSprite(&tft);
-    
     if (guiSprite) {
-        guiSprite->setColorDepth(16); 
-        if (guiSprite->createSprite(tft.width(), tft.height())) {
+        guiSprite->setColorDepth(16);
+        // After rotation, tft.width() == 160, tft.height() == 128. We need the opposite order for the sprite to fully cover the screen.
+        int spriteW = tft.height(); // 128
+        int spriteH = tft.width();  // 160
+        if (guiSprite->createSprite(spriteW, spriteH)) {
             guiSprite->setSwapBytes(true);
-            // TFT_eSprite inherits the uninitialized gfxFont from TFT_eSPI — same fix as above.
             guiSprite->setTextFont(1);
             Serial.printf("[DisplayMgr] Sprite %dx%d allocated\n",
                           guiSprite->width(), guiSprite->height());
-
-            // --- SPRITE PIPELINE PROOF ---
-            // If these flashes don't appear, pushSprite is broken (coords/format/bus).
-            // If they do appear, the UI drawing code is the culprit.
-            guiSprite->fillSprite(TFT_BLUE);
-            guiSprite->pushSprite(0, 0);
-            delay(500);
-            guiSprite->fillSprite(TFT_YELLOW);
-            guiSprite->pushSprite(0, 0);
-            delay(500);
-            guiSprite->fillSprite(TFT_BLACK);
-            guiSprite->pushSprite(0, 0);
-            // --- END PROOF ---
-
             Serial.println("[DisplayMgr] GUI sprite allocated successfully");
         } else {
             Serial.println("[DisplayMgr] ERROR: Failed to allocate GUI sprite");
@@ -74,31 +89,6 @@ void DisplayManager::initTFT() {
             guiSprite = nullptr;
         }
     }
-    Serial.println("[DisplayMgr] TFT initialized");
-}
-
-void DisplayManager::initEpaper() {
-    // ePaper uses hardware SPI via the global SPI object (FSPI / SPI2 on S3).
-    // Explicitly define unused pins for MISO and SS to prevent ESP32-S3 HAL
-    // from defaulting to GPIO 13 and 10, which would hijack TFT_RST and TFT_CS!
-    constexpr int8_t DUMMY_MISO = 8;
-    SPI.begin(Pins::EP_SCK, DUMMY_MISO, Pins::EP_MOSI, Pins::EP_CS);
-    epd.init(115200, true, 20, false, SPI, SPISettings(4000000, MSBFIRST, SPI_MODE0));
-    epd.setRotation(1);
-
-    // --- HARDWARE PROOF START ---
-    epd.setFullWindow();
-    epd.fillScreen(GxEPD_BLACK);
-    epd.display();
-    epd.fillScreen(GxEPD_WHITE);
-    epd.display();
-    // --- HARDWARE PROOF END ---
-
-    epd.powerOff();  // Power down completely to save energy
-    Serial.println("[DisplayMgr] ePaper initialized (Hardware SPI via FSPI)");
-
-    // The TFT does NOT need re-initialization here. They use completely separate SPI 
-    // hardware blocks (TFT on HSPI, ePaper on FSPI). 
 }
 
 void DisplayManager::turnOnTFT() {
@@ -154,7 +144,8 @@ void DisplayManager::drawEpaperView(int index) {
     int y2 = H / 2 - 8;
     int y3 = (3 * H) / 4 - 8;
 
-    epd.setPartialWindow(0, 0, W, H);
+    epd.setFullWindow();
+    delay(100);
     epd.firstPage();
     do {
         epd.fillScreen(GxEPD_WHITE);
@@ -170,12 +161,17 @@ void DisplayManager::drawEpaperView(int index) {
         epd.setCursor(centeredX(task.title), y3);
         epd.print(task.title);
     } while (epd.nextPage());
-
-    epd.powerOff();
+    
+    delay(500);
+    epd.hibernate(); // Hibernate to match DualDisplayTest behavior
+    delay(100);
 }
 
 void DisplayManager::updateEpaperPartial(int viewIndex) {
-    // Do not re-initialize the SPI bus here. Let the ePaper library manage bus state.
+    // Re-assert ePaper SPI bus pins before drawing.
+    // TFT init (HSPI) may have altered GPIO matrix routing for FSPI.
+    SPI.begin(Pins::EP_SCK, -1, Pins::EP_MOSI, Pins::EP_CS);
+    delay(100);
     drawEpaperView(viewIndex);
 }
 
@@ -254,7 +250,7 @@ void DisplayManager::drawActiveGUI(const TaskItem tasks[], uint32_t taskCount, i
 
 // End of UI draw: push to screen
     Serial.println("[SYS_TEST] drawActiveGUI end, about to pushSprite");
-    guiSprite->pushSprite(0, 0);
+    guiSprite->pushSprite(offsetX, offsetY);
     Serial.printf("[SYS_TEST] drawActiveGUI pushSprite complete, FreeHeap after = %u\n", ESP.getFreeHeap());
 }
 
@@ -390,5 +386,98 @@ void DisplayManager::drawAddViewGUI(const char* currentInput) {
     guiSprite->setCursor(4, H - FOOTER_H + 2);
     guiSprite->print("ENT:Save ESC:Cancel");
 
-    guiSprite->pushSprite(0, 0);
+    guiSprite->pushSprite(offsetX, offsetY);
 }
+
+void DisplayManager::clearFullHardwareScreen() {
+    // Blast a large area of the raw hardware to clear ghost pixels outside the sprite.
+    // We do this before pushSprite so any offset-induced fringe is wiped.
+    // Use direct TFT fill, ignoring the sprite entirely.
+    tft.fillScreen(TFT_BLACK);
+}
+
+// --- alignFlashPhase: static state for flashing between two colors each draw call ---
+// Tracks which of two frames we're on so every call to drawAlignGUI automatically
+// alternates, making "live" pixels obvious vs static GRAM ghosts.
+static bool _alignPhase = false;
+static uint32_t _alignLastFlip = 0;
+
+void DisplayManager::drawAlignGUI() {
+    if (!guiSprite) return;
+
+    // Flip the phase every ~400ms
+    uint32_t now = millis();
+    if (now - _alignLastFlip > 400) {
+        _alignPhase = !_alignPhase;
+        _alignLastFlip = now;
+    }
+
+    const int W = guiSprite->width();
+    const int H = guiSprite->height();
+
+    // --- PHASE 0: Checkerboard (reveals every pixel position) ---
+    // --- PHASE 1: Solid dark blue with markers (different from Phase 0) ---
+    // This way: any pixel that doesn't change between phases is a static GRAM ghost!
+
+    if (_alignPhase) {
+        // Phase A: 8x8 checkerboard so you can count exact pixel positions
+        const int CELL = 8;
+        for (int y = 0; y < H; y++) {
+            for (int x = 0; x < W; x++) {
+                bool even = ((x / CELL) + (y / CELL)) % 2 == 0;
+                guiSprite->drawPixel(x, y, even ? TFT_WHITE : TFT_BLUE);
+            }
+        }
+        // Overlay: bright cyan border exactly at sprite edges (pixels 0 and W-1/H-1)
+        guiSprite->drawRect(0, 0, W, H, TFT_CYAN);
+    } else {
+        // Phase B: solid dark background with yellow border + info text
+        guiSprite->fillSprite(guiSprite->color565(0, 0, 60));
+        guiSprite->drawRect(0, 0, W, H, TFT_YELLOW);
+        guiSprite->drawRect(1, 1, W-2, H-2, TFT_YELLOW);
+    }
+
+    // --- Corner crosshairs: always drawn over whatever phase bg ---
+    // Each crosshair is a + at the 4 corners, 10px arms.
+    // These let you see EXACTLY where the logical pixel (0,0), (W-1,0), etc. land.
+    const int ARM = 10;
+    const uint16_t XH_COL = TFT_RED;
+    // Top-left
+    guiSprite->drawFastHLine(0, 0, ARM, XH_COL);
+    guiSprite->drawFastVLine(0, 0, ARM, XH_COL);
+    // Top-right
+    guiSprite->drawFastHLine(W-ARM, 0, ARM, XH_COL);
+    guiSprite->drawFastVLine(W-1,   0, ARM, XH_COL);
+    // Bottom-left
+    guiSprite->drawFastHLine(0,     H-1, ARM, XH_COL);
+    guiSprite->drawFastVLine(0,     H-ARM, ARM, XH_COL);
+    // Bottom-right
+    guiSprite->drawFastHLine(W-ARM, H-1, ARM, XH_COL);
+    guiSprite->drawFastVLine(W-1,   H-ARM, ARM, XH_COL);
+    // Centre crosshair
+    guiSprite->drawFastHLine(W/2 - ARM/2, H/2, ARM, XH_COL);
+    guiSprite->drawFastVLine(W/2,         H/2 - ARM/2, ARM, XH_COL);
+
+    // --- Text overlay (phase B only, so it doesn't fight the checkerboard) ---
+    if (!_alignPhase) {
+        guiSprite->setTextSize(1);
+        guiSprite->setTextColor(TFT_WHITE, guiSprite->color565(0, 0, 60));
+        guiSprite->setCursor(14, 20);
+        guiSprite->print("ALIGN MODE");
+        guiSprite->setCursor(14, 34);
+        guiSprite->printf("X=%d Y=%d", offsetX, offsetY);
+        guiSprite->setCursor(14, 48);
+        guiSprite->print("Arrow=move");
+        guiSprite->setCursor(14, 62);
+        guiSprite->print("ESC=done");
+        // Phase indicator so you know it's alive
+        guiSprite->setTextColor(TFT_GREEN, guiSprite->color565(0, 0, 60));
+        guiSprite->setCursor(14, 76);
+        guiSprite->print("PHASE B");
+    }
+
+    // Always clear hardware first so any fringe from old offset is wiped
+    clearFullHardwareScreen();
+    guiSprite->pushSprite(offsetX, offsetY);
+}
+

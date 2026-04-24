@@ -13,8 +13,10 @@ public:
     DisplayManager();
     ~DisplayManager();
 
-    void initTFT();
-    void initEpaper();
+    int offsetX = 0;
+    int offsetY = 0;
+
+    void initBusesAndDisplays();
 
     void turnOnTFT();
     void turnOffTFT();
@@ -24,6 +26,8 @@ public:
 
     void drawActiveGUI(const TaskItem tasks[], uint32_t taskCount, int selectedIndex);
     void drawAddViewGUI(const char* currentInput);
+    void drawAlignGUI();
+    void clearFullHardwareScreen();
     // Smoke test drawing path for diagnostics
     void drawSmokeTest();
     // Full-screen solid color diagnostic test to verify end-to-end render path

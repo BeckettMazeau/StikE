@@ -84,6 +84,12 @@ void keyboardTask(void* parameter) {
             if (key != 0) {
                 uint8_t k = static_cast<uint8_t>(key);
                 switch (k) {
+                    case 0xB4: // Left arrow
+                        sendSystemEvent(SystemEventType::EVENT_NAV_LEFT);
+                        break;
+                    case 0xB7: // Right arrow
+                        sendSystemEvent(SystemEventType::EVENT_NAV_RIGHT);
+                        break;
                     case 0xB5: // Up arrow
                         sendSystemEvent(SystemEventType::EVENT_NAV_UP);
                         break;
@@ -96,8 +102,12 @@ void keyboardTask(void* parameter) {
                     case 0x08: // Backspace / Del
                         sendSystemEvent(SystemEventType::EVENT_BACKSPACE);
                         break;
-                    case 0x1B: // ESC — sleep in LIST, cancel in ADD (handled by state)
+                    case 0x1B: // ESC — sleep in LIST, cancel in ADD/ALIGN
                         sendSystemEvent(SystemEventType::SLEEP_REQ);
+                        break;
+                    case 0x9A: // Fn + A — trigger alignment mode
+                        // We will repurpose EVENT_TYPE_CHAR with a special param
+                        sendSystemEvent(SystemEventType::EVENT_TYPE_CHAR, 0x9A);
                         break;
                     default:
                         if (k >= 0x20 && k <= 0x7E) {
@@ -227,12 +237,19 @@ static void handleUIListEvent(const SystemEvent& event) {
             break;
 
         case SystemEventType::EVENT_TYPE_CHAR:
-            // 'n'/'N' is the only char that does anything in LIST view
+            // 'n'/'N' opens Add Task view
             if (event.param == 'n' || event.param == 'N') {
                 LOG_PRINTLN("[Input] N - opening Add Task view");
                 inputBuffer[0] = '\0';
                 inputBufferLen = 0;
                 currentState = SystemState::STATE_UI_ADD_TASK;
+                uiDirty = true;
+            }
+            // 0x9A (Fn+A) opens Alignment Mode
+            else if (event.param == 0x9A) {
+                LOG_PRINTLN("[Input] Fn+A - entering alignment mode");
+                currentState = SystemState::STATE_UI_ALIGN;
+                displayMgr.clearFullHardwareScreen();
                 uiDirty = true;
             }
             break;
@@ -292,6 +309,45 @@ static void handleUIAddTaskEvent(const SystemEvent& event) {
     }
 }
 
+static void handleUIAlignEvent(const SystemEvent& event) {
+    switch (event.type) {
+        case SystemEventType::SLEEP_REQ:
+            // ESC in ALIGN = return to LIST
+            LOG_PRINTLN("[Input] ESC in ALIGN - returning to list");
+            currentState = SystemState::STATE_UI_LIST;
+            displayMgr.clearFullHardwareScreen();
+            uiDirty = true;
+            break;
+
+        case SystemEventType::EVENT_NAV_UP:
+            displayMgr.offsetY--;
+            displayMgr.clearFullHardwareScreen();
+            uiDirty = true;
+            break;
+
+        case SystemEventType::EVENT_NAV_DOWN:
+            displayMgr.offsetY++;
+            displayMgr.clearFullHardwareScreen();
+            uiDirty = true;
+            break;
+            
+        case SystemEventType::EVENT_NAV_LEFT:
+            displayMgr.offsetX--;
+            displayMgr.clearFullHardwareScreen();
+            uiDirty = true;
+            break;
+            
+        case SystemEventType::EVENT_NAV_RIGHT:
+            displayMgr.offsetX++;
+            displayMgr.clearFullHardwareScreen();
+            uiDirty = true;
+            break;
+
+        default:
+            break;
+    }
+}
+
 void handleSleepState() {
     LOG_PRINTF("[Sleep] Cycle %u, view %d\n", sleepCycleCount, currentEpaperView);
 
@@ -303,16 +359,27 @@ void handleSleepState() {
 
     // Configure wake-up sources
     esp_sleep_enable_timer_wakeup(SLEEP_DURATION_US);
+    
+    // Enable GPIO 14 LOW_LEVEL wake only when going to sleep!
+    // Doing this in setup() causes an interrupt storm if the button is held low.
+    gpio_wakeup_enable(static_cast<gpio_num_t>(Pins::WAKE_BTN), GPIO_INTR_LOW_LEVEL);
     esp_sleep_enable_gpio_wakeup();
 
     // Clear wake flag before sleeping
     wakeRequested = false;
 
-    // Power down VDDSDIO domain to reduce power consumption during sleep
-    esp_sleep_pd_config(ESP_PD_DOMAIN_VDDSDIO, ESP_PD_OPTION_OFF);
+    // DO NOT power down VDDSDIO during light sleep! It crashes the flash memory 
+    // causing a reboot (which explains the random color flashing on wake).
+    // esp_sleep_pd_config(ESP_PD_DOMAIN_VDDSDIO, ESP_PD_OPTION_OFF);
 
     // Enter light sleep
     esp_light_sleep_start();
+
+    // Disable low level wakeup immediately after waking so it doesn't cause WDT panics
+    gpio_wakeup_disable(static_cast<gpio_num_t>(Pins::WAKE_BTN));
+    
+    // Re-attach active-mode falling edge interrupt just to be safe
+    attachInterrupt(Pins::WAKE_BTN, wakeButtonISR, FALLING);
 
     // Check wake reason immediately after waking
     if (wakeRequested) {
@@ -322,25 +389,27 @@ void handleSleepState() {
 }
 
 void setup() {
+    // Give serial a moment to initialize before beginning
+    delay(2000); 
     Serial.begin(115200);
+    // Wait for Serial to connect (up to 3 seconds) for easier debugging
+    while (!Serial && millis() < 5000); 
+
     delay(500);
     LOG_PRINTLN("\n=== StikE Firmware Starting ===");
 
-    LOG_PRINTLN("[Setup] Calling displayMgr.initTFT()...");
-    displayMgr.initTFT();
-    LOG_PRINTLN("[Setup] displayMgr.initTFT() returned");
-    
-    LOG_PRINTLN("[Setup] Calling displayMgr.initEpaper()...");
-    displayMgr.initEpaper();
-    LOG_PRINTLN("[Setup] displayMgr.initEpaper() returned");
+    LOG_PRINTLN("[Setup] Calling displayMgr.initBusesAndDisplays()...");
+    displayMgr.initBusesAndDisplays();
+    LOG_PRINTLN("[Setup] displayMgr.initBusesAndDisplays() returned");
+    delay(100); // Stabilization delay
     
     LOG_PRINTLN("[Setup] Calling keyboardMgr.init()...");
     keyboardMgr.init();
     LOG_PRINTLN("[Setup] keyboardMgr.init() returned");
+    delay(100); // Stabilization delay
 
     pinMode(Pins::WAKE_BTN, INPUT_PULLUP);
     attachInterrupt(Pins::WAKE_BTN, wakeButtonISR, FALLING);
-    esp_sleep_enable_gpio_wakeup();
 
     // Create system event queue
     systemEventQueue = xQueueCreate(10, sizeof(SystemEvent));
@@ -444,6 +513,9 @@ void loop() {
             case SystemState::STATE_UI_ADD_TASK:
                 handleUIAddTaskEvent(event);
                 break;
+            case SystemState::STATE_UI_ALIGN:
+                handleUIAlignEvent(event);
+                break;
             default:
                 break;
         }
@@ -461,6 +533,9 @@ void loop() {
                 break;
             case SystemState::STATE_UI_ADD_TASK:
                 displayMgr.drawAddViewGUI(inputBuffer);
+                break;
+            case SystemState::STATE_UI_ALIGN:
+                displayMgr.drawAlignGUI();
                 break;
             default:
                 break;

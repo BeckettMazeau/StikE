@@ -6,6 +6,7 @@
 enum class SystemState {
     STATE_UI_LIST,
     STATE_UI_ADD_TASK,
+    STATE_UI_ALIGN,
     STATE_SLEEP,
     STATE_EPAPER_UPDATE
 };
@@ -13,6 +14,8 @@ enum class SystemState {
 enum class SystemEventType {
     EVENT_NAV_UP,
     EVENT_NAV_DOWN,
+    EVENT_NAV_LEFT,
+    EVENT_NAV_RIGHT,
     EVENT_SELECT,
     EVENT_TYPE_CHAR,
     EVENT_BACKSPACE,
