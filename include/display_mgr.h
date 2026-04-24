@@ -33,7 +33,7 @@ public:
     void drawAddViewGUI(const char* currentInput, int activeField, bool hasDue, int y, int m, int d, int h, int min);
     void drawEditViewGUI(const char* currentInput, int activeField, bool hasDue, int y, int m, int d, int h, int min);
     void drawQuickAddGUI(const char* currentInput);
-    void drawSettingsGUI(int selectedItem, uint8_t brightness, uint16_t sleepTimeout, bool isLowPowerMode);
+    void drawSettingsGUI(int selectedItem, uint8_t brightness, uint16_t sleepTimeout, const char* wifiSSID, const char* wifiPassword, const char* gcalURL, bool isEditingSetting, const char* inputBuffer, bool isLowPowerMode);
     void drawAlignGUI();
     void drawCalendarGUI(CalendarView view, int year, int month, int day, const CalendarEvent events[], uint32_t eventCount, int selectedEventIdx);
     void drawEventDetailGUI(const CalendarEvent& event, int scrollOffset = 0);

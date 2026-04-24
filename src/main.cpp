@@ -13,6 +13,11 @@
 #include "keyboard_mgr.h"
 #include "power_mgr.h"
 
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <ArduinoJson.h>
+
+
 // TEST_START: Systems Test
 #ifdef STike_SYSTEM_TEST
 #include "systems_test.h"
@@ -101,7 +106,14 @@ volatile bool wakeRequested = false;
 
 // Preferences for NVS storage
 Preferences prefs;
-
+int settingsSelectedIndex = 0;
+bool isEditingSetting = false;
+char wifiSSID[INPUT_BUFFER_SIZE] = "";
+char wifiPassword[INPUT_BUFFER_SIZE] = "";
+char gcalURL[INPUT_BUFFER_SIZE] = "";
+uint8_t tftBrightness = 255;
+uint16_t autoSleepMinutes = 5;
+uint32_t lastInputTime = 0;
 // Sleep-safe logging macros
 #define LOG_PRINT(...)   do { if (Serial) Serial.print(__VA_ARGS__); } while(0)
 #define LOG_PRINTLN(...) do { if (Serial) Serial.println(__VA_ARGS__); } while(0)
@@ -1117,7 +1129,153 @@ static void handleUIHelpEvent(const SystemEvent& event) {
 }
 
 
+
+// ==========================================
+// Synchronization
+// ==========================================
+void syncGoogleCalendar() {
+    if (strlen(wifiSSID) == 0 || strlen(gcalURL) == 0) {
+        LOG_PRINTLN("[Sync] Missing WiFi SSID or GCal URL. Aborting.");
+        return;
+    }
+
+    displayMgr.turnOnTFT();
+    displayMgr.drawDirectColorFrame(TFT_NAVY); // Indicate syncing state visually
+
+    LOG_PRINTF("[Sync] Connecting to WiFi: %s\n", wifiSSID);
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(wifiSSID, wifiPassword);
+
+    int attempts = 0;
+    while (WiFi.status() != WL_CONNECTED && attempts < 20) {
+        delay(500);
+        Serial.print(".");
+        attempts++;
+    }
+    Serial.println();
+
+    if (WiFi.status() != WL_CONNECTED) {
+        LOG_PRINTLN("[Sync] Failed to connect to WiFi.");
+        WiFi.mode(WIFI_OFF);
+        return;
+    }
+    LOG_PRINTLN("[Sync] WiFi Connected!");
+
+    // Fetch Calendar Events
+    LOG_PRINTF("[Sync] Fetching Calendar from: %s\n", gcalURL);
+    HTTPClient http;
+    http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+    http.begin(gcalURL);
+    int httpCode = http.GET();
+
+    if (httpCode > 0) {
+        if (httpCode == HTTP_CODE_OK) {
+            String payload = http.getString();
+            LOG_PRINTLN("[Sync] Received JSON payload. Parsing...");
+
+            // Parse JSON
+            DynamicJsonDocument doc(8192); // ~8KB for a batch of events
+            DeserializationError error = deserializeJson(doc, payload);
+
+            if (error) {
+                LOG_PRINTF("[Sync] deserializeJson() failed: %s\n", error.c_str());
+            } else {
+                // Clear old synced events (those not linked to a local task)
+                uint32_t newCount = 0;
+                CalendarEvent tempEvents[MAX_CALENDAR_EVENTS];
+
+                // Keep locally created / task-linked events
+                for (uint32_t i = 0; i < calendarEventCount; i++) {
+                    if (calendarEvents[i].linkedTaskId != 0) {
+                        tempEvents[newCount++] = calendarEvents[i];
+                    }
+                }
+
+                // Add new remote events
+                JsonArray events = doc.as<JsonArray>();
+                for (JsonObject event : events) {
+                    if (newCount >= MAX_CALENDAR_EVENTS) break;
+
+                    const char* title = event["title"] | "Busy";
+                    int year = event["year"] | calYear;
+                    int month = event["month"] | calMonth;
+                    int day = event["day"] | calDay;
+                    int hour = event["hour"] | 9;
+                    int minute = event["minute"] | 0;
+                    int duration = event["duration"] | 60;
+                    const char* notes = event["notes"] | "";
+                    const char* location = event["location"] | "";
+
+                    tempEvents[newCount++] = CalendarEvent(title, year, month, day, hour, minute, duration, notes, location, 0);
+                }
+
+                // Copy back
+                calendarEventCount = newCount;
+                for (uint32_t i = 0; i < calendarEventCount; i++) {
+                    calendarEvents[i] = tempEvents[i];
+                }
+
+                LOG_PRINTF("[Sync] Calendar updated. Total events: %d\n", calendarEventCount);
+            }
+        } else {
+            LOG_PRINTF("[Sync] HTTP GET failed, error: %s\n", http.errorToString(httpCode).c_str());
+        }
+    } else {
+        LOG_PRINTF("[Sync] HTTP Connection failed, error: %s\n", http.errorToString(httpCode).c_str());
+    }
+
+    http.end();
+
+    // Disconnect
+    WiFi.disconnect(true);
+    WiFi.mode(WIFI_OFF);
+    LOG_PRINTLN("[Sync] Complete. WiFi powered off.");
+    uiDirty = true;
+}
+
 static void handleUISettingsEvent(const SystemEvent& event) {
+    if (isEditingSetting) {
+        switch (event.type) {
+            case SystemEventType::EVENT_CANCEL:
+                isEditingSetting = false;
+                uiDirty = true;
+                break;
+            case SystemEventType::EVENT_BACKSPACE:
+                if (inputBufferLen > 0) {
+                    inputBuffer[--inputBufferLen] = '\0';
+                    uiDirty = true;
+                }
+                break;
+            case SystemEventType::EVENT_SELECT:
+                // Save from inputBuffer to appropriate variable
+                if (settingsSelectedIndex == 3) {
+                    strncpy(wifiSSID, inputBuffer, INPUT_BUFFER_SIZE);
+                    wifiSSID[INPUT_BUFFER_SIZE - 1] = '\0';
+                } else if (settingsSelectedIndex == 4) {
+                    strncpy(wifiPassword, inputBuffer, INPUT_BUFFER_SIZE);
+                    wifiPassword[INPUT_BUFFER_SIZE - 1] = '\0';
+                } else if (settingsSelectedIndex == 5) {
+                    strncpy(gcalURL, inputBuffer, INPUT_BUFFER_SIZE);
+                    gcalURL[INPUT_BUFFER_SIZE - 1] = '\0';
+                }
+                isEditingSetting = false;
+                uiDirty = true;
+                break;
+            case SystemEventType::EVENT_TYPE_CHAR: {
+                char c = (char)event.param;
+                if (inputBufferLen < INPUT_BUFFER_SIZE - 1 && c >= 0x20 && c <= 0x7E) {
+                    inputBuffer[inputBufferLen++] = c;
+                    inputBuffer[inputBufferLen] = '\0';
+                    uiDirty = true;
+                }
+                break;
+            }
+            default:
+                break;
+        }
+        return; // Don't process navigation events while editing text
+    }
+
     switch (event.type) {
         case SystemEventType::EVENT_CANCEL:
         case SystemEventType::EVENT_BACKSPACE:
@@ -1138,7 +1296,7 @@ static void handleUISettingsEvent(const SystemEvent& event) {
             break;
 
         case SystemEventType::EVENT_NAV_DOWN:
-            if (settingsSelectedIndex < 2) { // We have 3 settings: 0=Brightness, 1=AutoSleep, 2=LowPower
+            if (settingsSelectedIndex < 6) { // We have 7 settings
                 settingsSelectedIndex++;
                 uiDirty = true;
             }
@@ -1172,6 +1330,26 @@ static void handleUISettingsEvent(const SystemEvent& event) {
             } else if (settingsSelectedIndex == 2) { // LowPower
                 isLowPowerMode = true;
                 setLowPowerMode(isLowPowerMode);
+                uiDirty = true;
+            }
+            break;
+
+        case SystemEventType::EVENT_SELECT:
+            if (settingsSelectedIndex == 6) {
+                syncGoogleCalendar();
+                uiDirty = true;
+            } else if (settingsSelectedIndex >= 3 && settingsSelectedIndex <= 5) {
+                // Enter edit mode
+                isEditingSetting = true;
+                inputBufferLen = 0;
+                if (settingsSelectedIndex == 3) {
+                    strncpy(inputBuffer, wifiSSID, INPUT_BUFFER_SIZE);
+                } else if (settingsSelectedIndex == 4) {
+                    strncpy(inputBuffer, wifiPassword, INPUT_BUFFER_SIZE);
+                } else if (settingsSelectedIndex == 5) {
+                    strncpy(inputBuffer, gcalURL, INPUT_BUFFER_SIZE);
+                }
+                inputBufferLen = strlen(inputBuffer);
                 uiDirty = true;
             }
             break;
@@ -1355,7 +1533,16 @@ void setup() {
 
 
     // Load tasks from NVS
-    loadTasks();
+
+    // Load Settings
+    prefs.begin("stike", true);
+    tftBrightness = prefs.getUChar("brightness", 255);
+    autoSleepMinutes = prefs.getUShort("autoSleep", 5);
+    prefs.getString("wifiSSID", "").toCharArray(wifiSSID, INPUT_BUFFER_SIZE);
+    prefs.getString("wifiPass", "").toCharArray(wifiPassword, INPUT_BUFFER_SIZE);
+    prefs.getString("gcalURL", "").toCharArray(gcalURL, INPUT_BUFFER_SIZE);
+    prefs.end();
+loadTasks();
     if (taskCount == 0) {
         addDemoTasks();
         LOG_PRINTLN("[Setup] No saved tasks found, using demo tasks");
@@ -1441,6 +1628,15 @@ void loop() {
             default:
                 break;
         }
+
+        // Global handler for Settings
+        if (event.type == SystemEventType::EVENT_TYPE_CHAR && event.param == 0x9B) {
+            previousState = currentState;
+            currentState = SystemState::STATE_UI_SETTINGS;
+            settingsSelectedIndex = 0;
+            uiDirty = true;
+        }
+
         // A sleep transition mid-drain: stop processing immediately
         if (currentState == SystemState::STATE_SLEEP) {
             return;
@@ -1495,7 +1691,7 @@ void loop() {
                 displayMgr.drawQuickAddGUI(inputBuffer);
                 break;
             case SystemState::STATE_UI_SETTINGS:
-                displayMgr.drawSettingsGUI(settingsSelectedIndex, tftBrightness, autoSleepMinutes, isLowPowerMode);
+                displayMgr.drawSettingsGUI(settingsSelectedIndex, tftBrightness, autoSleepMinutes, wifiSSID, wifiPassword, gcalURL, isEditingSetting, inputBuffer, isLowPowerMode);
                 break;
             default:
                 break;

@@ -1396,7 +1396,7 @@ void DisplayManager::setTFTBrightness(uint8_t brightness) {
     }
 }
 
-void DisplayManager::drawSettingsGUI(int selectedItem, uint8_t brightness, uint16_t sleepTimeout, bool isLowPowerMode) {
+void DisplayManager::drawSettingsGUI(int selectedItem, uint8_t brightness, uint16_t sleepTimeout, const char* wifiSSID, const char* wifiPassword, const char* gcalURL, bool isEditingSetting, const char* inputBuffer, bool isLowPowerMode) {
     if (!tftOn) return;
 
     guiSprite->fillSprite(TFT_BLACK);
@@ -1409,50 +1409,95 @@ void DisplayManager::drawSettingsGUI(int selectedItem, uint8_t brightness, uint1
 
     // Help hint
     guiSprite->setTextColor(0x7BEF); // Light Gray
-    guiSprite->drawString("ESC: Exit  < >: Change", 2, 114);
+    if (isEditingSetting) {
+        guiSprite->drawString("ENTER: Save  ESC: Cancel", 2, 114);
+    } else {
+        guiSprite->drawString("ESC: Exit  < >/ENTER", 2, 114);
+    }
 
     guiSprite->setTextColor(TFT_WHITE);
     guiSprite->setTextDatum(ML_DATUM);
 
     // Settings Items
-    const int itemHeight = 20;
-    const int startY = 30;
+    const int itemHeight = 16;
+    int startY = 24;
 
-    for (int i = 0; i < 3; i++) {
-        int y = startY + (i * itemHeight);
+    // We have 7 items now: Brightness, AutoSleep, Low Power, WiFi SSID, WiFi Pass, GCal URL, Sync Cal
+    int scrollOffset = 0;
+    if (selectedItem > 3) {
+        scrollOffset = (selectedItem - 3) * itemHeight;
+    }
+
+    const char* labels[] = {"Brightness", "AutoSleep", "Low Power", "WiFi SSID", "WiFi Pass", "GCal URL", "Sync Cal"};
+
+    for (int i = 0; i < 7; i++) {
+        int y = startY + (i * itemHeight) - scrollOffset;
+
+        if (y < 20 || y > 110) continue; // Skip drawing items outside the viewable area
 
         if (i == selectedItem) {
-            guiSprite->fillRect(0, y - 10, 160, itemHeight, 0x3186); // Dark Gray
-            guiSprite->drawRect(0, y - 10, 160, itemHeight, TFT_ORANGE);
+            guiSprite->fillRect(0, y - 8, 160, itemHeight, 0x3186); // Dark Gray
+            guiSprite->drawRect(0, y - 8, 160, itemHeight, TFT_ORANGE);
             guiSprite->setTextColor(TFT_ORANGE);
         } else {
             guiSprite->setTextColor(TFT_WHITE);
         }
 
-        if (i == 0) {
-            guiSprite->drawString("Brightness", 5, y);
-            char valStr[16];
-            snprintf(valStr, sizeof(valStr), "%d", brightness);
-            guiSprite->setTextDatum(MR_DATUM);
-            guiSprite->drawString(valStr, 155, y);
-            guiSprite->setTextDatum(ML_DATUM);
-                } else if (i == 1) {
-            guiSprite->drawString("Auto-Sleep", 5, y);
-            char valStr[16];
+        guiSprite->drawString(labels[i], 5, y);
+
+        // Right-aligned values
+        guiSprite->setTextDatum(MR_DATUM);
+
+        char displayStr[128];
+        displayStr[0] = '\0';
+
+        if (i == 0) { // Brightness
+            snprintf(displayStr, sizeof(displayStr), "%d", brightness);
+        } else if (i == 1) { // AutoSleep
             if (sleepTimeout == 0) {
-                snprintf(valStr, sizeof(valStr), "Never");
+                snprintf(displayStr, sizeof(displayStr), "Never");
             } else {
-                snprintf(valStr, sizeof(valStr), "%d min", sleepTimeout);
+                snprintf(displayStr, sizeof(displayStr), "%d min", sleepTimeout);
             }
-            guiSprite->setTextDatum(MR_DATUM);
-            guiSprite->drawString(valStr, 155, y);
-            guiSprite->setTextDatum(ML_DATUM);
-        } else if (i == 2) {
-            guiSprite->drawString("Low Power", 5, y);
-            guiSprite->setTextDatum(MR_DATUM);
-            guiSprite->drawString(isLowPowerMode ? "On" : "Off", 155, y);
-            guiSprite->setTextDatum(ML_DATUM);
+        } else if (i == 2) { // Low Power
+            snprintf(displayStr, sizeof(displayStr), isLowPowerMode ? "ON" : "OFF");
+        } else if (i == 3) { // WiFi SSID
+            if (i == selectedItem && isEditingSetting) {
+                snprintf(displayStr, sizeof(displayStr), "%s_", inputBuffer);
+            } else {
+                snprintf(displayStr, sizeof(displayStr), "%s", wifiSSID);
+            }
+        } else if (i == 4) { // WiFi Pass
+            if (i == selectedItem && isEditingSetting) {
+                snprintf(displayStr, sizeof(displayStr), "%s_", inputBuffer);
+            } else {
+                int len = strlen(wifiPassword);
+                if (len > 0) {
+                    for(int p=0; p<len && p<8; p++) displayStr[p] = '*';
+                    displayStr[min(len, 8)] = '\0';
+                }
+            }
+        } else if (i == 5) { // GCal URL
+            if (i == selectedItem && isEditingSetting) {
+                snprintf(displayStr, sizeof(displayStr), "%s_", inputBuffer);
+            } else {
+                snprintf(displayStr, sizeof(displayStr), "%s", gcalURL);
+            }
+        } else if (i == 6) { // Sync Calendar
+            snprintf(displayStr, sizeof(displayStr), "Press ENTER");
         }
+
+        // Truncate if it's too long to fit on screen
+        if (strlen(displayStr) > 12) {
+            char trunc[16];
+            strncpy(trunc, displayStr, 10);
+            trunc[10] = '.'; trunc[11] = '.'; trunc[12] = '\0';
+            guiSprite->drawString(trunc, 155, y);
+        } else {
+            guiSprite->drawString(displayStr, 155, y);
+        }
+
+        guiSprite->setTextDatum(ML_DATUM);
     }
 
     pushDirtySprite(0, 0);

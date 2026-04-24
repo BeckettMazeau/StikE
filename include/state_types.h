@@ -13,6 +13,7 @@ enum class SystemState {
     STATE_UI_EVENT_DETAIL,
     STATE_UI_HELP,
     STATE_UI_QUICK_ADD,
+    STATE_UI_SETTINGS,
     STATE_SLEEP,
     STATE_EPAPER_UPDATE
 };
@@ -127,4 +128,4 @@ struct EpaperViewItem {
 
 constexpr uint32_t EPAPER_VIEW_COUNT = 10;
 constexpr uint64_t SLEEP_DURATION_US = 10 * 1000000ULL;
-constexpr uint32_t INPUT_BUFFER_SIZE = 32;
+constexpr uint32_t INPUT_BUFFER_SIZE = 128;
