@@ -22,11 +22,18 @@ public:
     void turnOffTFT();
 
     void updateEpaperPartial(int viewIndex);
-    void prepareEpaperViews(const TaskItem tasks[], uint32_t taskCount);
+    void prepareEpaperViews(const TaskItem tasks[], uint32_t taskCount,
+                            const CalendarEvent events[], uint32_t eventCount,
+                            uint16_t curYear, uint8_t curMonth, uint8_t curDay, uint8_t curHour);
 
     void drawActiveGUI(const TaskItem tasks[], uint32_t taskCount, int selectedIndex);
-    void drawAddViewGUI(const char* currentInput);
+    void drawAddViewGUI(const char* currentInput, int activeField, bool hasDue, int y, int m, int d, int h, int min);
+    void drawEditViewGUI(const char* currentInput, int activeField, bool hasDue, int y, int m, int d, int h, int min);
     void drawAlignGUI();
+    void drawCalendarGUI(CalendarView view, int year, int month, int day, const CalendarEvent events[], uint32_t eventCount, int selectedEventIdx);
+    void drawEventDetailGUI(const CalendarEvent& event);
+    void drawHelpGUI(SystemState fromState);
+    void drawAddEventGUI(const char* title, int hour, int duration, int activeField);
     void clearFullHardwareScreen();
     // Smoke test drawing path for diagnostics
     void drawSmokeTest();
@@ -38,6 +45,7 @@ public:
     void drawDirectColorFrame(uint16_t color);
     // Simple sprite test - tiny sprite to verify sprite path works
     void drawActiveGUISimpleTest();
+    uint32_t getEpaperViewCount() const { return epaperViewCount; }
 
     TFT_eSPI& getTFT() { return tft; }
     bool isTFTOn() const { return tftOn; }
@@ -48,7 +56,7 @@ private:
     GxEPD2_BW<GxEPD2_213_B74, GxEPD2_213_B74::HEIGHT> epd;
 
     bool tftOn;
-    TaskItem epaperViews[EPAPER_VIEW_COUNT];
+    EpaperViewItem epaperViews[EPAPER_VIEW_COUNT];
     uint32_t epaperViewCount;
 
     void drawEpaperView(int index);

@@ -4,14 +4,10 @@
 #include "display_mgr.h"
 #include "state_types.h"
 
-// ePaper display instance using B74 type - pins from GxEPD2_display_selection.h
-// CS=7, DC=16, RST=15, BUSY=4 (Software SPI bit-banged)
-GxEPD2_213_B74 epd_instance(7, 16, 15, 4);
-
 DisplayManager::DisplayManager()
     : tft()
     , guiSprite(nullptr)
-    , epd(epd_instance)
+    , epd(GxEPD2_213_B74(Pins::EP_CS, Pins::EP_DC, Pins::EP_RST, Pins::EP_BUSY))
     , tftOn(false)
     , epaperViewCount(0) {
 }
@@ -32,9 +28,10 @@ void DisplayManager::initBusesAndDisplays() {
     Serial.println("[DisplayMgr] Init ePaper SPI...");
     SPI.begin(Pins::EP_SCK, -1, Pins::EP_MOSI, Pins::EP_CS);
     delay(100);
-    epd.init(115200, true, 10, false, SPI, SPISettings(4000000, MSBFIRST, SPI_MODE0));
+    epd.init(115200);
     delay(200);
     epd.setRotation(1);
+    epd.setTextSize(2);
     epd.setTextColor(GxEPD_BLACK);
     epd.setFullWindow();
     delay(100);
@@ -44,9 +41,8 @@ void DisplayManager::initBusesAndDisplays() {
     epd.firstPage();
     do {
         epd.fillScreen(GxEPD_WHITE);
-        epd.setCursor(10, 50);
-        epd.setTextSize(2);
-        epd.print("StikE Initialized");
+        epd.setCursor(0, 50);
+        epd.print("StikE Init");
     } while (epd.nextPage());
 
     // 3. Hibernate ePaper — done with FSPI until sleep mode
@@ -69,15 +65,13 @@ void DisplayManager::initBusesAndDisplays() {
     tft.fillScreen(TFT_BLACK); // Clear entire GRAM including edge pixels
     tftOn = true;
 
-    // 5. Create GUI sprite – allocate with dimensions matching the visible area after rotation (width=128, height=160)
+    // 5. Create GUI sprite – allocate with dimensions matching the visible area after rotation
     Serial.println("[DisplayMgr] Creating GUI sprite...");
     guiSprite = new TFT_eSprite(&tft);
     if (guiSprite) {
         guiSprite->setColorDepth(16);
-        // After rotation, tft.width() == 160, tft.height() == 128. We need the opposite order for the sprite to fully cover the screen.
-        int spriteW = tft.height(); // 128
-        int spriteH = tft.width();  // 160
-        if (guiSprite->createSprite(spriteW, spriteH)) {
+        // Create sprite with dimensions matching the current rotation (e.g., 160x128 in landscape)
+        if (guiSprite->createSprite(tft.width(), tft.height())) {
             guiSprite->setSwapBytes(true);
             guiSprite->setTextFont(1);
             Serial.printf("[DisplayMgr] Sprite %dx%d allocated\n",
@@ -108,12 +102,102 @@ void DisplayManager::turnOffTFT() {
     }
 }
 
-void DisplayManager::prepareEpaperViews(const TaskItem tasks[], uint32_t taskCount) {
-    epaperViewCount = (taskCount < EPAPER_VIEW_COUNT) ? taskCount : EPAPER_VIEW_COUNT;
-    for (uint32_t i = 0; i < epaperViewCount; ++i) {
-        epaperViews[i] = tasks[i];
+namespace {
+bool isWithin24Hours(const CalendarEvent& ev, uint16_t curYear, uint8_t curMonth, uint8_t curDay, uint8_t curHour) {
+    // Very simplified "within 24 hours" check
+    if (ev.year == curYear && ev.month == curMonth) {
+        if (ev.day == curDay) {
+            return ev.hour >= curHour; // Future today
+        }
+        if (ev.day == curDay + 1) {
+            return ev.hour < curHour; // Before same hour tomorrow
+        }
     }
-    Serial.printf("[DisplayMgr] Prepared %u ePaper views\n", epaperViewCount);
+    // Handle month wrap (simplified)
+    if (ev.year == curYear && ev.month == curMonth + 1 && ev.day == 1 && curDay >= 28) {
+        return ev.hour < curHour;
+    }
+    // Handle year wrap
+    if (ev.year == curYear + 1 && ev.month == 1 && ev.day == 1 && curMonth == 12 && curDay == 31) {
+        return ev.hour < curHour;
+    }
+    return false;
+}
+}
+
+void DisplayManager::prepareEpaperViews(const TaskItem tasks[], uint32_t taskCount,
+                                        const CalendarEvent events[], uint32_t eventCount,
+                                        uint16_t curYear, uint8_t curMonth, uint8_t curDay, uint8_t curHour) {
+    epaperViewCount = 0;
+
+    // Collect all eligible items first
+    static EpaperItem allItems[MAX_TASKS + MAX_CALENDAR_EVENTS];
+    uint32_t eligibleCount = 0;
+
+    // 1. Collect all upcoming events within 24 hours
+    static CalendarEvent eligibleEvents[MAX_CALENDAR_EVENTS];
+    uint32_t eligibleEventCount = 0;
+    for (uint32_t i = 0; i < eventCount; ++i) {
+        if (isWithin24Hours(events[i], curYear, curMonth, curDay, curHour)) {
+            eligibleEvents[eligibleEventCount++] = events[i];
+        }
+    }
+
+    // Sort eligibleEvents by time (soonest first)
+    for (uint32_t i = 0; i < eligibleEventCount; i++) {
+        for (uint32_t j = i + 1; j < eligibleEventCount; j++) {
+            bool swap = false;
+            if (eligibleEvents[i].year > eligibleEvents[j].year) swap = true;
+            else if (eligibleEvents[i].year == eligibleEvents[j].year) {
+                if (eligibleEvents[i].month > eligibleEvents[j].month) swap = true;
+                else if (eligibleEvents[i].month == eligibleEvents[j].month) {
+                    if (eligibleEvents[i].day > eligibleEvents[j].day) swap = true;
+                    else if (eligibleEvents[i].day == eligibleEvents[j].day) {
+                        if (eligibleEvents[i].hour > eligibleEvents[j].hour) swap = true;
+                        else if (eligibleEvents[i].hour == eligibleEvents[j].hour) {
+                            if (eligibleEvents[i].minute > eligibleEvents[j].minute) swap = true;
+                        }
+                    }
+                }
+            }
+            if (swap) {
+                CalendarEvent tmp = eligibleEvents[i];
+                eligibleEvents[i] = eligibleEvents[j];
+                eligibleEvents[j] = tmp;
+            }
+        }
+    }
+
+    // 2. Take maximum 2 soonest events
+    uint32_t eventsToTake = (eligibleEventCount > 2) ? 2 : eligibleEventCount;
+    for (uint32_t i = 0; i < eventsToTake; i++) {
+        allItems[eligibleCount].type = EpaperViewType::EVENT;
+        allItems[eligibleCount].event = eligibleEvents[i];
+        eligibleCount++;
+    }
+
+    // 3. Collect tasks that are NOT completed
+    for (uint32_t i = 0; i < taskCount && eligibleCount < (MAX_TASKS + MAX_CALENDAR_EVENTS); ++i) {
+        if (!tasks[i].isCompleted) {
+            allItems[eligibleCount].type = EpaperViewType::TASK;
+            allItems[eligibleCount].task = tasks[i];
+            eligibleCount++;
+        }
+    }
+
+    // Chunk into screens
+    uint32_t itemIdx = 0;
+    while (itemIdx < eligibleCount && epaperViewCount < EPAPER_VIEW_COUNT) {
+        EpaperViewItem& view = epaperViews[epaperViewCount];
+        view.itemCount = 0;
+        for (uint32_t j = 0; j < ITEMS_PER_EPAPER_SCREEN && itemIdx < eligibleCount; ++j) {
+            view.items[j] = allItems[itemIdx++];
+            view.itemCount++;
+        }
+        epaperViewCount++;
+    }
+
+    Serial.printf("[DisplayMgr] Prepared %u ePaper screens with %u items total\n", epaperViewCount, eligibleCount);
 }
 
 void DisplayManager::drawEpaperView(int index) {
@@ -121,49 +205,58 @@ void DisplayManager::drawEpaperView(int index) {
         return;
     }
 
-    const TaskItem& task = epaperViews[index];
+    const EpaperViewItem& view = epaperViews[index];
 
-    char line1[24];
-    snprintf(line1, sizeof(line1), "Task %d of %u",
-             index + 1, static_cast<unsigned>(epaperViewCount));
-    const char* line2 = task.isCompleted ? "[DONE]" : "[PENDING]";
+    // Re-initialize ePaper to wake from hibernate before drawing
+    epd.init(115200);
+    delay(200);
+    epd.setRotation(1);
+    epd.setTextSize(2);
+    epd.setTextColor(GxEPD_BLACK);
+    epd.setFullWindow();
+    delay(100);
 
-    // Size-2 default font = 12px wide per glyph, 16px tall
-    const int CHAR_W = 12;
     const int W = epd.width();
     const int H = epd.height();
 
-    auto centeredX = [&](const char* s) {
-        int px = static_cast<int>(strlen(s)) * CHAR_W;
-        int x = (W - px) / 2;
-        return (x < 2) ? 2 : x;
-    };
-
-    // Vertical layout: three lines evenly spaced
-    int y1 = H / 4 - 8;
-    int y2 = H / 2 - 8;
-    int y3 = (3 * H) / 4 - 8;
-
-    epd.setFullWindow();
-    delay(100);
     epd.firstPage();
     do {
         epd.fillScreen(GxEPD_WHITE);
-        epd.setTextColor(GxEPD_BLACK);
-        epd.setTextSize(2);
+        
+        // Header
+        char header[32];
+        snprintf(header, sizeof(header), "STIKE | %d/%u", index + 1, epaperViewCount);
+        epd.setCursor(10, 4);
+        epd.print(header);
+        epd.drawFastHLine(0, 20, W, GxEPD_BLACK);
 
-        epd.setCursor(centeredX(line1), y1);
-        epd.print(line1);
+        // Draw items
+        for (int i = 0; i < view.itemCount; i++) {
+            const EpaperItem& item = view.items[i];
+            int yItem = 25 + i * 26; // 25, 51, 77
 
-        epd.setCursor(centeredX(line2), y2);
-        epd.print(line2);
+            epd.setCursor(10, yItem);
+            if (item.type == EpaperViewType::TASK) {
+                char title[20];
+                strncpy(title, item.task.title, 18);
+                title[18] = '\0';
+                epd.printf("[ ] %s", title);
+            } else {
+                char title[18];
+                strncpy(title, item.event.title, 16);
+                title[16] = '\0';
+                epd.printf("%02d:%02d %s", item.event.hour, item.event.minute, title);
+            }
 
-        epd.setCursor(centeredX(task.title), y3);
-        epd.print(task.title);
+            // Separator (only if not the last item on screen)
+            if (i < view.itemCount - 1) {
+                epd.drawFastHLine(10, yItem + 18, W - 20, GxEPD_BLACK);
+            }
+        }
     } while (epd.nextPage());
     
     delay(500);
-    epd.hibernate(); // Hibernate to match DualDisplayTest behavior
+    epd.hibernate();
     delay(100);
 }
 
@@ -219,8 +312,13 @@ void DisplayManager::drawActiveGUI(const TaskItem tasks[], uint32_t taskCount, i
         bool selected = (i == selectedIndex);
 
         char line[40];
-        snprintf(line, sizeof(line), "[%c] %.28s",
-                 tasks[i].isCompleted ? 'x' : ' ', tasks[i].title);
+        if (tasks[i].hasDueDate) {
+            snprintf(line, sizeof(line), "[%c] %.10s %02d/%02d %02d:%02d",
+                     tasks[i].isCompleted ? 'x' : ' ', tasks[i].title, tasks[i].dueMonth, tasks[i].dueDay, tasks[i].dueHour, tasks[i].dueMinute);
+        } else {
+            snprintf(line, sizeof(line), "[%c] %.28s",
+                     tasks[i].isCompleted ? 'x' : ' ', tasks[i].title);
+        }
         // Additional runtime diagnostic of what we're drawing for each list item
         Serial.printf("[SYS_TEST] draw line %d: title='%s', completed=%d, line='%s'\n",
                       i, tasks[i].title, tasks[i].isCompleted ? 1 : 0, line);
@@ -243,10 +341,6 @@ void DisplayManager::drawActiveGUI(const TaskItem tasks[], uint32_t taskCount, i
     }
 
     // --- Footer ---
-    guiSprite->fillRect(0, H - FOOTER_H, W, FOOTER_H, headerBg);
-    guiSprite->setTextColor(TFT_WHITE, headerBg);
-    guiSprite->setCursor(4, H - FOOTER_H + 2);
-    guiSprite->print("N:New ENT:Tgl ESC:Sleep");
 
 // End of UI draw: push to screen
     Serial.println("[SYS_TEST] drawActiveGUI end, about to pushSprite");
@@ -339,10 +433,8 @@ void DisplayManager::drawActiveGUISimpleTest() {
     Serial.println("[SYS_TEST] Simple sprite test complete");
 }
 
-void DisplayManager::drawAddViewGUI(const char* currentInput) {
-    if (!guiSprite) {
-        return;
-    }
+void DisplayManager::drawAddViewGUI(const char* currentInput, int activeField, bool hasDue, int y, int m, int d, int h, int min) {
+    if (!guiSprite) return;
 
     const int W = guiSprite->width();
     const int H = guiSprite->height();
@@ -351,40 +443,167 @@ void DisplayManager::drawAddViewGUI(const char* currentInput) {
     guiSprite->fillSprite(TFT_BLACK);
     guiSprite->setTextSize(1);
 
-    // --- Header ---
+    // Header
     guiSprite->fillRect(0, 0, W, HEADER_H, headerBg);
     guiSprite->setTextColor(TFT_WHITE, headerBg);
     guiSprite->setCursor(4, 3);
     guiSprite->print("== NEW TASK ==");
 
-    // --- Body: wrapped input with cursor ---
+    int curY = HEADER_H + 6;
+    
+    // Field 0: Title
     guiSprite->setTextColor(TFT_WHITE, TFT_BLACK);
-    const int CHAR_W = 6;   // default font 6x8
-    const int CHARS_PER_LINE = (W - 8) / CHAR_W;
-    const int baseY = HEADER_H + 6;
+    guiSprite->setCursor(4, curY);
+    guiSprite->print("Title:");
+    curY += 10;
+    guiSprite->fillRect(4, curY, W - 8, 12, activeField == 0 ? TFT_WHITE : TFT_DARKGREY);
+    guiSprite->setTextColor(activeField == 0 ? TFT_BLACK : TFT_WHITE, activeField == 0 ? TFT_WHITE : TFT_DARKGREY);
+    guiSprite->setCursor(6, curY + 2);
+    guiSprite->printf("%s%s", currentInput, activeField == 0 ? "_" : "");
+    curY += 18;
 
-    int len = currentInput ? static_cast<int>(strlen(currentInput)) : 0;
-    int col = 0;
-    int row = 0;
-    for (int i = 0; i < len; ++i) {
-        if (col >= CHARS_PER_LINE) {
-            col = 0;
-            row++;
-        }
-        guiSprite->setCursor(4 + col * CHAR_W, baseY + row * LINE_H);
-        guiSprite->write(static_cast<uint8_t>(currentInput[i]));
-        col++;
+    // Field 1: Has Due Date
+    guiSprite->setTextColor(TFT_WHITE, TFT_BLACK);
+    guiSprite->setCursor(4, curY);
+    guiSprite->print("Has Due Date? (Y/N):");
+    curY += 10;
+    guiSprite->fillRect(4, curY, 40, 12, activeField == 1 ? TFT_YELLOW : TFT_DARKGREY);
+    guiSprite->setTextColor(TFT_BLACK, activeField == 1 ? TFT_YELLOW : TFT_DARKGREY);
+    guiSprite->setCursor(6, curY + 2);
+    guiSprite->print(hasDue ? "YES" : "NO");
+    curY += 18;
+
+    if (hasDue) {
+        // Field 2, 3, 4: Date
+        guiSprite->setTextColor(TFT_WHITE, TFT_BLACK);
+        guiSprite->setCursor(4, curY);
+        guiSprite->print("Date & Time:");
+        curY += 10;
+        
+        // Day
+        guiSprite->fillRect(4, curY, 20, 12, activeField == 2 ? TFT_YELLOW : TFT_DARKGREY);
+        guiSprite->setTextColor(TFT_BLACK, activeField == 2 ? TFT_YELLOW : TFT_DARKGREY);
+        guiSprite->setCursor(6, curY + 2);
+        guiSprite->printf("%02d", d);
+        
+        // Month
+        guiSprite->fillRect(30, curY, 20, 12, activeField == 3 ? TFT_YELLOW : TFT_DARKGREY);
+        guiSprite->setTextColor(TFT_BLACK, activeField == 3 ? TFT_YELLOW : TFT_DARKGREY);
+        guiSprite->setCursor(32, curY + 2);
+        guiSprite->printf("%02d", m);
+
+        // Year
+        guiSprite->fillRect(56, curY, 40, 12, activeField == 4 ? TFT_YELLOW : TFT_DARKGREY);
+        guiSprite->setTextColor(TFT_BLACK, activeField == 4 ? TFT_YELLOW : TFT_DARKGREY);
+        guiSprite->setCursor(58, curY + 2);
+        guiSprite->printf("%04d", y);
+
+        // Hour
+        guiSprite->fillRect(100, curY, 20, 12, activeField == 5 ? TFT_YELLOW : TFT_DARKGREY);
+        guiSprite->setTextColor(TFT_BLACK, activeField == 5 ? TFT_YELLOW : TFT_DARKGREY);
+        guiSprite->setCursor(102, curY + 2);
+        guiSprite->printf("%02d", h);
+
+        // Minute
+        guiSprite->fillRect(126, curY, 20, 12, activeField == 6 ? TFT_YELLOW : TFT_DARKGREY);
+        guiSprite->setTextColor(TFT_BLACK, activeField == 6 ? TFT_YELLOW : TFT_DARKGREY);
+        guiSprite->setCursor(128, curY + 2);
+        guiSprite->printf("%02d", min);
     }
-    // Cursor marker
-    if (col >= CHARS_PER_LINE) { col = 0; row++; }
-    guiSprite->setCursor(4 + col * CHAR_W, baseY + row * LINE_H);
-    guiSprite->print("_");
 
-    // --- Footer ---
+    // Footer
     guiSprite->fillRect(0, H - FOOTER_H, W, FOOTER_H, headerBg);
     guiSprite->setTextColor(TFT_WHITE, headerBg);
     guiSprite->setCursor(4, H - FOOTER_H + 2);
-    guiSprite->print("ENT:Save ESC:Cancel");
+    guiSprite->print("ENT:Next BS:Back");
+
+    guiSprite->pushSprite(offsetX, offsetY);
+}
+
+void DisplayManager::drawEditViewGUI(const char* currentInput, int activeField, bool hasDue, int y, int m, int d, int h, int min) {
+    // Re-use logic with different header
+    if (!guiSprite) return;
+
+    const int W = guiSprite->width();
+    const int H = guiSprite->height();
+    const uint16_t headerBg = guiSprite->color565(0, 0, 90);
+
+    guiSprite->fillSprite(TFT_BLACK);
+    guiSprite->setTextSize(1);
+
+    // Header
+    guiSprite->fillRect(0, 0, W, HEADER_H, headerBg);
+    guiSprite->setTextColor(TFT_WHITE, headerBg);
+    guiSprite->setCursor(4, 3);
+    guiSprite->print("== EDIT TASK ==");
+
+    int curY = HEADER_H + 6;
+    
+    // Field 0: Title
+    guiSprite->setTextColor(TFT_WHITE, TFT_BLACK);
+    guiSprite->setCursor(4, curY);
+    guiSprite->print("Title:");
+    curY += 10;
+    guiSprite->fillRect(4, curY, W - 8, 12, activeField == 0 ? TFT_WHITE : TFT_DARKGREY);
+    guiSprite->setTextColor(activeField == 0 ? TFT_BLACK : TFT_WHITE, activeField == 0 ? TFT_WHITE : TFT_DARKGREY);
+    guiSprite->setCursor(6, curY + 2);
+    guiSprite->printf("%s%s", currentInput, activeField == 0 ? "_" : "");
+    curY += 18;
+
+    // Field 1: Has Due Date
+    guiSprite->setTextColor(TFT_WHITE, TFT_BLACK);
+    guiSprite->setCursor(4, curY);
+    guiSprite->print("Has Due Date? (Y/N):");
+    curY += 10;
+    guiSprite->fillRect(4, curY, 40, 12, activeField == 1 ? TFT_YELLOW : TFT_DARKGREY);
+    guiSprite->setTextColor(TFT_BLACK, activeField == 1 ? TFT_YELLOW : TFT_DARKGREY);
+    guiSprite->setCursor(6, curY + 2);
+    guiSprite->print(hasDue ? "YES" : "NO");
+    curY += 18;
+
+    if (hasDue) {
+        // Field 2, 3, 4: Date
+        guiSprite->setTextColor(TFT_WHITE, TFT_BLACK);
+        guiSprite->setCursor(4, curY);
+        guiSprite->print("Date & Time:");
+        curY += 10;
+        
+        // Day
+        guiSprite->fillRect(4, curY, 20, 12, activeField == 2 ? TFT_YELLOW : TFT_DARKGREY);
+        guiSprite->setTextColor(TFT_BLACK, activeField == 2 ? TFT_YELLOW : TFT_DARKGREY);
+        guiSprite->setCursor(6, curY + 2);
+        guiSprite->printf("%02d", d);
+        
+        // Month
+        guiSprite->fillRect(30, curY, 20, 12, activeField == 3 ? TFT_YELLOW : TFT_DARKGREY);
+        guiSprite->setTextColor(TFT_BLACK, activeField == 3 ? TFT_YELLOW : TFT_DARKGREY);
+        guiSprite->setCursor(32, curY + 2);
+        guiSprite->printf("%02d", m);
+
+        // Year
+        guiSprite->fillRect(56, curY, 40, 12, activeField == 4 ? TFT_YELLOW : TFT_DARKGREY);
+        guiSprite->setTextColor(TFT_BLACK, activeField == 4 ? TFT_YELLOW : TFT_DARKGREY);
+        guiSprite->setCursor(58, curY + 2);
+        guiSprite->printf("%04d", y);
+
+        // Hour
+        guiSprite->fillRect(100, curY, 20, 12, activeField == 5 ? TFT_YELLOW : TFT_DARKGREY);
+        guiSprite->setTextColor(TFT_BLACK, activeField == 5 ? TFT_YELLOW : TFT_DARKGREY);
+        guiSprite->setCursor(102, curY + 2);
+        guiSprite->printf("%02d", h);
+
+        // Minute
+        guiSprite->fillRect(126, curY, 20, 12, activeField == 6 ? TFT_YELLOW : TFT_DARKGREY);
+        guiSprite->setTextColor(TFT_BLACK, activeField == 6 ? TFT_YELLOW : TFT_DARKGREY);
+        guiSprite->setCursor(128, curY + 2);
+        guiSprite->printf("%02d", min);
+    }
+
+    // Footer
+    guiSprite->fillRect(0, H - FOOTER_H, W, FOOTER_H, headerBg);
+    guiSprite->setTextColor(TFT_WHITE, headerBg);
+    guiSprite->setCursor(4, H - FOOTER_H + 2);
+    guiSprite->print("ENT:Next BS:Back");
 
     guiSprite->pushSprite(offsetX, offsetY);
 }
@@ -480,4 +699,320 @@ void DisplayManager::drawAlignGUI() {
     clearFullHardwareScreen();
     guiSprite->pushSprite(offsetX, offsetY);
 }
+
+void DisplayManager::drawCalendarGUI(CalendarView view, int year, int month, int day, const CalendarEvent events[], uint32_t eventCount, int selectedEventIdx) {
+    if (!guiSprite) return;
+
+    const int W = guiSprite->width();
+    const int H = guiSprite->height();
+    const uint16_t headerBg = guiSprite->color565(0, 60, 0); 
+
+    guiSprite->fillSprite(TFT_BLACK);
+    guiSprite->setTextSize(1);
+
+    // --- Header ---
+    guiSprite->fillRect(0, 0, W, HEADER_H, headerBg);
+    guiSprite->setTextColor(TFT_WHITE, headerBg);
+    guiSprite->setCursor(4, 3);
+    char headerBuf[32];
+    if (view == CalendarView::MONTH) snprintf(headerBuf, sizeof(headerBuf), "MONTH: %04d-%02d", year, month);
+    else if (view == CalendarView::WEEK) snprintf(headerBuf, sizeof(headerBuf), "WEEK of %02d", day);
+    else snprintf(headerBuf, sizeof(headerBuf), "DAY: %04d-%02d-%02d", year, month, day);
+    guiSprite->print(headerBuf);
+
+    // --- Body ---
+    int bodyY = HEADER_H + 2;
+    int bodyH = H - HEADER_H - FOOTER_H - 4;
+
+    if (view == CalendarView::MONTH) {
+        int cellW = W / 7;
+        int cellH = bodyH / 5;
+        for (int i = 0; i < 31; i++) {
+            int row = i / 7;
+            int col = i % 7;
+            int x = col * cellW;
+            int y = bodyY + row * cellH;
+            
+            int dayNum = i + 1;
+            int dayEvents = 0;
+            for (uint32_t e = 0; e < eventCount; e++) {
+                if (events[e].day == dayNum && events[e].month == month) dayEvents++;
+            }
+
+            if (dayNum == day) {
+                guiSprite->fillRect(x, y, cellW, cellH, TFT_WHITE);
+                guiSprite->setTextColor(TFT_BLACK, TFT_WHITE);
+            } else {
+                guiSprite->drawRect(x, y, cellW, cellH, TFT_DARKGREY);
+                guiSprite->setTextColor(TFT_WHITE, TFT_BLACK);
+            }
+            guiSprite->setCursor(x + 2, y + 2);
+            guiSprite->print(dayNum);
+
+            // Small indicator for event count
+            if (dayEvents > 0) {
+                uint16_t countCol = (dayNum == day) ? TFT_BLUE : TFT_YELLOW;
+                guiSprite->setTextColor(countCol, (dayNum == day) ? TFT_WHITE : TFT_BLACK);
+                guiSprite->setCursor(x + cellW - 8, y + cellH - 8);
+                guiSprite->print(dayEvents);
+            }
+        }
+    } else if (view == CalendarView::WEEK) {
+        int colW = W / 7;
+        // Draw 7 vertical bars
+        for (int i = 0; i < 7; i++) {
+            int x = i * colW;
+            guiSprite->drawRect(x, bodyY, colW, bodyH, TFT_DARKGREY);
+            guiSprite->setCursor(x + 2, bodyY + 2);
+            guiSprite->print(i + 1); 
+        }
+        // Draw all events for the week (placeholder: just show this month's events on their day)
+        for (uint32_t i = 0; i < eventCount; i++) {
+            if (events[i].month == month) {
+                int dayOfWeek = (events[i].day - 1) % 7;
+                int x = dayOfWeek * colW;
+                int y = bodyY + (events[i].hour * bodyH / 24);
+                int h = (events[i].duration * bodyH / (24 * 60));
+                if (h < 3) h = 3;
+                guiSprite->fillRect(x + 1, y, colW - 2, h, TFT_BLUE);
+            }
+        }
+    } else if (view == CalendarView::DAY) {
+        // Day View: Simple vertical list of events to avoid overlap
+        int lineH = 14;
+        int maxLines = bodyH / lineH;
+        
+        // 1. Filter events for today (matching year, month, day)
+        int dayEvents[MAX_CALENDAR_EVENTS];
+        int dayCount = 0;
+        for (uint32_t i = 0; i < eventCount; i++) {
+            if (events[i].day == day && events[i].month == month && events[i].year == year) {
+                if (dayCount < (int)MAX_CALENDAR_EVENTS) {
+                    dayEvents[dayCount++] = i;
+                }
+            }
+        }
+
+        if (dayCount == 0) {
+            guiSprite->setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+            guiSprite->setCursor(4, bodyY + 10);
+            guiSprite->print("(No events today)");
+        } else {
+            // 2. Determine scroll window for vertical list
+            int startLine = 0;
+            if (selectedEventIdx >= maxLines) {
+                startLine = selectedEventIdx - maxLines + 1;
+            }
+
+            // 3. Draw visible event items
+            for (int i = 0; i < maxLines && (startLine + i) < dayCount; i++) {
+                int eventIdx = dayEvents[startLine + i];
+                const CalendarEvent& ev = events[eventIdx];
+                int y = bodyY + i * lineH;
+                bool selected = (startLine + i == selectedEventIdx);
+
+                if (selected) {
+                    guiSprite->fillRect(0, y, W, lineH, TFT_WHITE);
+                    guiSprite->setTextColor(TFT_BLACK, TFT_WHITE);
+                } else {
+                    guiSprite->setTextColor(TFT_WHITE, TFT_BLACK);
+                }
+
+                // Time Column: HH:MM - HH:MM
+                int endMin = (ev.hour * 60 + ev.minute + ev.duration);
+                char timeBuf[16];
+                snprintf(timeBuf, sizeof(timeBuf), "%02d:%02d-%02d:%02d", 
+                         ev.hour, ev.minute, (endMin / 60) % 24, endMin % 60);
+                
+                guiSprite->setCursor(4, y + 3);
+                guiSprite->print(timeBuf);
+
+                // Title Column (offset to the right)
+                guiSprite->drawFastVLine(82, y, lineH, selected ? TFT_BLACK : TFT_DARKGREY);
+                guiSprite->setCursor(86, y + 3);
+                
+                char titleBuf[24];
+                strncpy(titleBuf, ev.title, 23);
+                titleBuf[23] = '\0';
+                guiSprite->print(titleBuf);
+            }
+        }
+    }
+
+    guiSprite->pushSprite(offsetX, offsetY);
+}
+
+void DisplayManager::drawEventDetailGUI(const CalendarEvent& event) {
+    if (!guiSprite) return;
+    const int W = guiSprite->width();
+    const int H = guiSprite->height();
+    const uint16_t headerBg = guiSprite->color565(0, 60, 0);
+
+    guiSprite->fillSprite(TFT_BLACK);
+    guiSprite->setTextSize(1);
+
+    // Header
+    guiSprite->fillRect(0, 0, W, HEADER_H, headerBg);
+    guiSprite->setTextColor(TFT_WHITE, headerBg);
+    guiSprite->setCursor(4, 3);
+    guiSprite->print("EVENT DETAILS");
+
+    int y = HEADER_H + 10;
+    guiSprite->setTextColor(TFT_YELLOW, TFT_BLACK);
+    guiSprite->setCursor(4, y);
+    guiSprite->print("Title:");
+    y += 10;
+    guiSprite->setTextColor(TFT_WHITE, TFT_BLACK);
+    guiSprite->setCursor(4, y);
+    guiSprite->print(event.title);
+    y += 20;
+
+    guiSprite->setTextColor(TFT_YELLOW, TFT_BLACK);
+    guiSprite->setCursor(4, y);
+    guiSprite->print("Time:");
+    y += 10;
+    guiSprite->setTextColor(TFT_WHITE, TFT_BLACK);
+    guiSprite->setCursor(4, y);
+    int endMin = (event.hour * 60 + event.minute + event.duration);
+    guiSprite->printf("%02d:%02d - %02d:%02d", event.hour, event.minute, (endMin / 60) % 24, endMin % 60);
+    y += 20;
+
+    guiSprite->setTextColor(TFT_YELLOW, TFT_BLACK);
+    guiSprite->setCursor(4, y);
+    guiSprite->print("Location:");
+    y += 10;
+    guiSprite->setTextColor(TFT_WHITE, TFT_BLACK);
+    guiSprite->setCursor(4, y);
+    guiSprite->print(event.location[0] ? event.location : "N/A");
+    y += 20;
+
+    guiSprite->setTextColor(TFT_YELLOW, TFT_BLACK);
+    guiSprite->setCursor(4, y);
+    guiSprite->print("Notes:");
+    y += 10;
+    guiSprite->setTextColor(TFT_WHITE, TFT_BLACK);
+    guiSprite->setCursor(4, y);
+    guiSprite->print(event.notes[0] ? event.notes : "N/A");
+
+    guiSprite->pushSprite(offsetX, offsetY);
+}
+
+void DisplayManager::drawHelpGUI(SystemState fromState) {
+    if (!guiSprite) return;
+    const int W = guiSprite->width();
+    const int H = guiSprite->height();
+    const uint16_t headerBg = guiSprite->color565(60, 60, 60);
+
+    guiSprite->fillSprite(TFT_BLACK);
+    guiSprite->setTextSize(1);
+
+    // Header
+    guiSprite->fillRect(0, 0, W, HEADER_H, headerBg);
+    guiSprite->setTextColor(TFT_WHITE, headerBg);
+    guiSprite->setCursor(4, 3);
+    guiSprite->print("HELP & KEYBINDINGS");
+
+    int y = HEADER_H + 5;
+    guiSprite->setTextColor(TFT_WHITE, TFT_BLACK);
+    
+    auto printHelpLine = [&](const char* key, const char* desc) {
+        guiSprite->setTextColor(TFT_YELLOW, TFT_BLACK);
+        guiSprite->print(key);
+        guiSprite->setTextColor(TFT_WHITE, TFT_BLACK);
+        guiSprite->print(": ");
+        guiSprite->println(desc);
+        y += 10;
+        guiSprite->setCursor(4, y);
+    };
+
+    guiSprite->setCursor(4, y);
+    printHelpLine("Fn+A", "Align Mode");
+    printHelpLine("Fn+C", "Calendar");
+    printHelpLine("Fn+H", "Help Screen");
+    printHelpLine("BS", "Back / Delete");
+    printHelpLine("ENT", "Select / Save");
+    
+    y += 5;
+    guiSprite->setCursor(4, y);
+    guiSprite->setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+    guiSprite->println("--- SCREEN SPECIFIC ---");
+    y += 10;
+    guiSprite->setCursor(4, y);
+
+    if (fromState == SystemState::STATE_UI_LIST) {
+        printHelpLine("N", "New Task");
+        printHelpLine("E", "Edit Task");
+        printHelpLine("D", "Delete Task");
+    } else if (fromState == SystemState::STATE_UI_CALENDAR) {
+        printHelpLine("N", "New Event");
+        printHelpLine("V", "Cycle View");
+        printHelpLine("Arrows", "Navigate");
+    }
+
+    guiSprite->pushSprite(offsetX, offsetY);
+}
+
+void DisplayManager::drawAddEventGUI(const char* title, int hour, int duration, int activeField) {
+    if (!guiSprite) return;
+    const int W = guiSprite->width();
+    const int H = guiSprite->height();
+    const uint16_t headerBg = guiSprite->color565(0, 60, 0);
+
+    guiSprite->fillSprite(TFT_BLACK);
+    guiSprite->setTextSize(1);
+
+    // Header
+    guiSprite->fillRect(0, 0, W, HEADER_H, headerBg);
+    guiSprite->setTextColor(TFT_WHITE, headerBg);
+    guiSprite->setCursor(4, 3);
+    guiSprite->print("ADD CALENDAR EVENT");
+
+    // Fields
+    int y = HEADER_H + 10;
+    
+    // Field 0: Title
+    guiSprite->setTextColor(TFT_WHITE, TFT_BLACK);
+    guiSprite->setCursor(4, y);
+    guiSprite->print("Title:");
+    y += 10;
+    guiSprite->fillRect(4, y, W - 8, 12, activeField == 0 ? TFT_WHITE : TFT_DARKGREY);
+    guiSprite->setTextColor(activeField == 0 ? TFT_BLACK : TFT_WHITE, activeField == 0 ? TFT_WHITE : TFT_DARKGREY);
+    guiSprite->setCursor(6, y + 2);
+    guiSprite->printf("%s%s", title, activeField == 0 ? "_" : "");
+    y += 20;
+
+    // Field 1: Start Time
+    guiSprite->setTextColor(TFT_WHITE, TFT_BLACK);
+    guiSprite->setCursor(4, y);
+    guiSprite->print("Start Hour (0-23):");
+    y += 10;
+    guiSprite->fillRect(4, y, 40, 12, activeField == 1 ? TFT_YELLOW : TFT_DARKGREY);
+    guiSprite->setTextColor(TFT_BLACK, activeField == 1 ? TFT_YELLOW : TFT_DARKGREY);
+    guiSprite->setCursor(6, y + 2);
+    guiSprite->printf("%02d:00", hour);
+    if (activeField == 1) {
+        guiSprite->setTextColor(TFT_YELLOW, TFT_BLACK);
+        guiSprite->setCursor(50, y + 2);
+        guiSprite->print("< Use Arrows >");
+    }
+    y += 20;
+
+    // Field 2: Duration
+    guiSprite->setTextColor(TFT_WHITE, TFT_BLACK);
+    guiSprite->setCursor(4, y);
+    guiSprite->print("Duration (minutes):");
+    y += 10;
+    guiSprite->fillRect(4, y, 40, 12, activeField == 2 ? TFT_YELLOW : TFT_DARKGREY);
+    guiSprite->setTextColor(TFT_BLACK, activeField == 2 ? TFT_YELLOW : TFT_DARKGREY);
+    guiSprite->setCursor(6, y + 2);
+    guiSprite->printf("%d", duration);
+    if (activeField == 2) {
+        guiSprite->setTextColor(TFT_YELLOW, TFT_BLACK);
+        guiSprite->setCursor(50, y + 2);
+        guiSprite->print("< Use Arrows >");
+    }
+
+    guiSprite->pushSprite(offsetX, offsetY);
+}
+
 

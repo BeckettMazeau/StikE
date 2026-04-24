@@ -1,49 +1,35 @@
-# StikE Firmware
+# SYSTEM DEVELOPMENT LOG
 
-ESP32-S3 task manager with TFT + ePaper displays.
+## PROJECT MILESTONES
 
-## Build & Upload
+### Phase 1: Hardware Integration
+- Integrated dual-display architecture (TFT ST7735S and ePaper GxEPD2).
+- Resolved SPI bus contention by implementing sequential initialization.
+- Configured I2C Keyboard driver for CardKB/TCA9555.
+- Established GPIO mappings for ESP32-S3 DevKitC.
 
-```bash
-pio run -t upload
-pio device monitor
-```
+### Phase 2: Core Systems
+- Implemented FreeRTOS task for asynchronous keyboard polling on Core 0.
+- Developed centralized event-driven state machine for UI management.
+- Integrated NVS (Preferences) for persistent task and calendar storage.
+- Created flicker-free rendering pipeline using memory sprites.
 
-## Architecture
+### Phase 3: Task Management
+- Developed interactive Task List with selection and completion toggles.
+- Implemented task creation and editing workflows with multi-field input.
+- Added task deletion and linked calendar event synchronization.
 
-- **Dual display**: TFT (ST7735S, active mode) + ePaper (GDEQ0213B74, sleep mode)
-- **Input**: I2C keyboard on GPIO 18 (SDA), 21 (SCL)
-- **Storage**: NVS via Preferences library
-- **RTOS**: FreeRTOS with keyboard task pinned to core 0
+### Phase 4: Calendar System
+- Developed Month, Week, and Day calendar views.
+- Implemented event creation and detail inspection screens.
+- Created automated event-to-task linking logic.
 
-## State Machine
+### Phase 5: Power Management
+- Implemented Sleep Mode with TFT power-down.
+- Developed ePaper persistent display logic with multi-screen info cycling.
+- Configured GPIO and Timer wakeup routines.
 
-```
-STATE_ACTIVE <-> STATE_SLEEP
-```
-- ACTIVE: TFT on, serial logging enabled
-- SLEEP: TFT off, ePaper cycling, light sleep with timer/GPIO wake
-
-## Hardware Notes
-
-- OPI PSRAM uses GPIO 35-37 (not available)
-- Wake button on GPIO 14 (moved to avoid ePaper RST conflict)
-- TFT backlight on GPIO 42
-- TFT uses VSPI (SCK=12, MOSI=11, CS=10)
-- ePaper uses Software SPI (bit-banged)
-
-## Pin Configuration (see include/pins.h)
-
-| Component | Pins |
-|-----------|------|
-| TFT (ST7735S) | SCK=12, MOSI=11, CS=10, DC=9, RST=13, BL=42 |
-| ePaper (GDEQ0213B74) | CS=7, DC=16, RST=15, BUSY=4 (Software SPI) |
-| Keyboard (I2C) | SDA=18, SCL=21 |
-| Wake Button | GPIO 14 |
-
-## Key Files
-
-- `src/main.cpp` - entry point, state machine, task management
-- `include/pins.h` - pin definitions
-- `include/display_mgr.h` - dual display driver
-- `include/keyboard_mgr.h` - key input handling
+### Phase 6: Documentation and Cleanup
+- Created comprehensive system documentation.
+- Standardized file structure and code organization.
+- Performed system-wide sanitization of internal documentation.

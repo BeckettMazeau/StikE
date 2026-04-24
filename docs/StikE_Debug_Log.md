@@ -1,6 +1,6 @@
 # StikE Debugging Context and Progress
 
-This document captures the current debugging state of the StikE firmware project (ESP32-S3) with dual displays (TFT ST7735S, ePaper GxEPD2 213_B74), including issues observed, experiments performed, and the latest test results. It is intended as contextual input for a code-review/LLM-based analysis, not as a plan or set of instructions.
+This document captures the current debugging state of the StikE firmware project (ESP32-S3) with dual displays (TFT ST7735S, ePaper GxEPD2 213_B74), including issues observed, experiments performed, and the latest test results. It is intended as contextual input for technical analysis, not as a plan or set of instructions.
 
 ## Project and Environment Context
 
@@ -259,7 +259,3 @@ _Update_Part : 6
 -D STike_SYSTEM_TEST
 ; -D DIAG_UI_ONLY  (commented out)
 ```
-
----
-
-*This document is intended for independent review. It does not prescribe next steps - reviewers should assess the evidence and propose diagnostics based on their own analysis.*
