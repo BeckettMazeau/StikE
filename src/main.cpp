@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <esp_sleep.h>
+#include <WiFi.h>
 #include <esp_log.h>
 #include <Preferences.h>
 #include <freertos/FreeRTOS.h>
@@ -10,6 +11,12 @@
 #include "state_types.h"
 #include "display_mgr.h"
 #include "keyboard_mgr.h"
+#include "power_mgr.h"
+
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <ArduinoJson.h>
+
 
 // TEST_START: Systems Test
 #ifdef STike_SYSTEM_TEST
@@ -38,6 +45,19 @@ int taskListTopIndex = 0;  // Top of the visible scroll window for the task list
 TaskViewMode currentTaskView = TaskViewMode::ACTIVE;
 int filteredTaskIndices[MAX_TASKS];
 int filteredTaskCount = 0;
+
+// Global low power mode flag
+bool isLowPowerMode = false;
+
+// Toggle low power mode
+void setLowPowerMode(bool enable) {
+    isLowPowerMode = enable;
+    if (enable) {
+        setCpuFrequencyMhz(80);
+    } else {
+        setCpuFrequencyMhz(240);
+    }
+}
 
 void updateFilteredTasks() {
     filteredTaskCount = 0;
@@ -86,7 +106,14 @@ volatile bool wakeRequested = false;
 
 // Preferences for NVS storage
 Preferences prefs;
-
+int settingsSelectedIndex = 0;
+bool isEditingSetting = false;
+char wifiSSID[INPUT_BUFFER_SIZE] = "";
+char wifiPassword[INPUT_BUFFER_SIZE] = "";
+char gcalURL[INPUT_BUFFER_SIZE] = "";
+uint8_t tftBrightness = 255;
+uint16_t autoSleepMinutes = 5;
+uint32_t lastInputTime = 0;
 // Sleep-safe logging macros
 #define LOG_PRINT(...)   do { if (Serial) Serial.print(__VA_ARGS__); } while(0)
 #define LOG_PRINTLN(...) do { if (Serial) Serial.println(__VA_ARGS__); } while(0)
@@ -119,6 +146,7 @@ void keyboardTask(void* parameter) {
         if (keyboardMgr.isAvailable()) {
             char key = keyboardMgr.getKeyPress();
             if (key != 0) {
+                lastInputTime = millis();
                 uint8_t k = static_cast<uint8_t>(key);
                 switch (k) {
                     case 0xB4: // Left arrow
@@ -156,6 +184,9 @@ void keyboardTask(void* parameter) {
                     case 0xA8: // Fn + C — trigger calendar mode
                         sendSystemEvent(SystemEventType::EVENT_TYPE_CHAR, 0xA8);
                         break;
+                    case 0x9B: // Fn + S — Settings
+                        sendSystemEvent(SystemEventType::EVENT_TYPE_CHAR, 0x9B);
+                        break;
                     case 0x9F: // Fn + H — trigger help screen
                         sendSystemEvent(SystemEventType::EVENT_TYPE_CHAR, 0x9F);
                         break;
@@ -168,7 +199,7 @@ void keyboardTask(void* parameter) {
                 }
             }
         }
-        vTaskDelay(pdMS_TO_TICKS(10)); // 10ms polling interval
+        vTaskDelay(pdMS_TO_TICKS(isLowPowerMode ? 50 : 10)); // 10ms polling interval, 50ms in low power
     }
 }
 
@@ -179,9 +210,14 @@ void saveTasks() {
     
     // Save the entire tasks array as a binary blob for speed and efficiency
     prefs.putBytes("tasks_blob", tasks, sizeof(tasks));
+
+    // Save settings
+    prefs.putUChar("brightness", tftBrightness);
+    prefs.putUShort("autoSleep", autoSleepMinutes);
+    prefs.putBool("lowPower", isLowPowerMode);
     
     prefs.end();
-    LOG_PRINTLN("[NVS] Tasks saved as blob");
+    LOG_PRINTLN("[NVS] Tasks and settings saved as blob");
 }
 
 // Forward declaration - defined later in this file
@@ -197,6 +233,14 @@ void cleanupOldCompletedTasks() {
 void loadTasks() {
     prefs.begin("stike", true);
     taskCount = prefs.getUInt("taskCount", 0);
+
+    // Load Settings
+    tftBrightness = prefs.getUChar("brightness", 255);
+    autoSleepMinutes = prefs.getUShort("autoSleep", 5);
+    isLowPowerMode = prefs.getBool("lowPower", false);
+    setLowPowerMode(isLowPowerMode);
+    displayMgr.setTFTBrightness(tftBrightness);
+
     if (taskCount > MAX_TASKS) taskCount = MAX_TASKS;
     
     // Try to load the blob
@@ -212,8 +256,7 @@ void loadTasks() {
             char key[16];
             snprintf(key, sizeof(key), "task_%lu_title", i);
             String titleStr = prefs.getString(key, "");
-            strncpy(tasks[i].title, titleStr.c_str(), 31);
-            tasks[i].title[31] = '\0';
+            snprintf(tasks[i].title, sizeof(tasks[i].title), "%s", titleStr.c_str());
             
             snprintf(key, sizeof(key), "task_%lu_completed", i);
             tasks[i].isCompleted = prefs.getBool(key, false);
@@ -312,6 +355,7 @@ void wakeToActive() {
     LOG_PRINTLN("[State] Waking to ACTIVE mode");
 
     displayMgr.turnOnTFT();
+    displayMgr.setTFTBrightness(tftBrightness);
     currentState = SystemState::STATE_UI_LIST;
     currentTaskView = TaskViewMode::ACTIVE;
     updateFilteredTasks();
@@ -332,11 +376,13 @@ void parseNaturalLanguageTime(const char* title, int& hour) {
     
     if (ptr == endPtr) return; // No number found
     
-    // Check for am/pm
+    // Check for am/pm with explicit bounds check
     bool isPm = false;
     bool isAm = false;
-    if (strncasecmp(endPtr, "pm", 2) == 0) isPm = true;
-    else if (strncasecmp(endPtr, "am", 2) == 0) isAm = true;
+    if (endPtr[0] != '\0' && endPtr[1] != '\0') {
+        if (strncasecmp(endPtr, "pm", 2) == 0) isPm = true;
+        else if (strncasecmp(endPtr, "am", 2) == 0) isAm = true;
+    }
     
     if (isPm && val < 12) val += 12;
     else if (isAm && val == 12) val = 0;
@@ -448,8 +494,7 @@ static void handleUIListEvent(const SystemEvent& event) {
                 if (selectedTaskIndex >= 0 && selectedTaskIndex < static_cast<int>(filteredTaskCount)) {
                     int realIdx = filteredTaskIndices[selectedTaskIndex];
                     LOG_PRINTF("[Input] E - opening Edit Task view for index %d\n", realIdx);
-                    strncpy(inputBuffer, tasks[realIdx].title, INPUT_BUFFER_SIZE - 1);
-                    inputBuffer[INPUT_BUFFER_SIZE - 1] = '\0';
+                    snprintf(inputBuffer, INPUT_BUFFER_SIZE, "%.*s", (int)sizeof(tasks[realIdx].title), tasks[realIdx].title);
                     inputBufferLen = strlen(inputBuffer);
                     taskEditField = 0;
                     taskEditHasDue = tasks[realIdx].hasDueDate;
@@ -554,6 +599,11 @@ static void handleUIAddTaskEvent(const SystemEvent& event) {
                 previousState = currentState;
                 currentState = SystemState::STATE_UI_HELP;
                 uiDirty = true;
+            } else if (event.param == 0x9B) { // Fn + S
+                previousState = currentState;
+                currentState = SystemState::STATE_UI_SETTINGS;
+                settingsSelectedIndex = 0;
+                uiDirty = true;
             }
             break;
         }
@@ -657,6 +707,11 @@ static void handleUIEditTaskEvent(const SystemEvent& event) {
                 previousState = currentState;
                 currentState = SystemState::STATE_UI_HELP;
                 uiDirty = true;
+            } else if (event.param == 0x9B) { // Fn + S
+                previousState = currentState;
+                currentState = SystemState::STATE_UI_SETTINGS;
+                settingsSelectedIndex = 0;
+                uiDirty = true;
             }
             break;
         }
@@ -704,8 +759,7 @@ static void handleUIEditTaskEvent(const SystemEvent& event) {
             save_edit:
                 if (inputBufferLen > 0 && selectedTaskIndex >= 0 && selectedTaskIndex < static_cast<int>(filteredTaskCount)) {
                     int realIdx = filteredTaskIndices[selectedTaskIndex];
-                    strncpy(tasks[realIdx].title, inputBuffer, 31);
-                    tasks[realIdx].title[31] = '\0';
+                    snprintf(tasks[realIdx].title, sizeof(tasks[realIdx].title), "%.*s", (int)INPUT_BUFFER_SIZE, inputBuffer);
                     tasks[realIdx].hasDueDate = taskEditHasDue;
                     tasks[realIdx].dueYear = taskEditYear;
                     tasks[realIdx].dueMonth = taskEditMonth;
@@ -748,6 +802,11 @@ static void handleUIAlignEvent(const SystemEvent& event) {
             if (event.param == 0x9F) { // Fn + H
                 previousState = currentState;
                 currentState = SystemState::STATE_UI_HELP;
+                uiDirty = true;
+            } else if (event.param == 0x9B) { // Fn + S
+                previousState = currentState;
+                currentState = SystemState::STATE_UI_SETTINGS;
+                settingsSelectedIndex = 0;
                 uiDirty = true;
             }
             break;
@@ -900,6 +959,11 @@ static void handleUICalendarEvent(const SystemEvent& event) {
                 previousState = currentState;
                 currentState = SystemState::STATE_UI_HELP;
                 uiDirty = true;
+            } else if (event.param == 0x9B) { // Fn + S
+                previousState = currentState;
+                currentState = SystemState::STATE_UI_SETTINGS;
+                settingsSelectedIndex = 0;
+                uiDirty = true;
             } else if (event.param == 0x7F) { // Delete
                 if (currentCalendarView == CalendarView::DAY && selectedEventIndex >= 0) {
                     int dayIdx = 0;
@@ -958,6 +1022,11 @@ static void handleUIAddEventEvent(const SystemEvent& event) {
             if (c == 0x9F) { // Fn + H
                 previousState = currentState;
                 currentState = SystemState::STATE_UI_HELP;
+                uiDirty = true;
+            } else if (c == 0x9B) { // Fn + S
+                previousState = currentState;
+                currentState = SystemState::STATE_UI_SETTINGS;
+                settingsSelectedIndex = 0;
                 uiDirty = true;
             }
             break;
@@ -1032,6 +1101,11 @@ static void handleUIEventDetailEvent(const SystemEvent& event) {
                 previousState = currentState;
                 currentState = SystemState::STATE_UI_HELP;
                 uiDirty = true;
+            } else if (event.param == 0x9B) { // Fn + S
+                previousState = currentState;
+                currentState = SystemState::STATE_UI_SETTINGS;
+                settingsSelectedIndex = 0;
+                uiDirty = true;
             }
             break;
         default:
@@ -1049,6 +1123,237 @@ static void handleUIHelpEvent(const SystemEvent& event) {
         case SystemEventType::SLEEP_REQ:
             enterSleepMode();
             break;
+        default:
+            break;
+    }
+}
+
+
+
+// ==========================================
+// Synchronization
+// ==========================================
+void syncGoogleCalendar() {
+    if (strlen(wifiSSID) == 0 || strlen(gcalURL) == 0) {
+        LOG_PRINTLN("[Sync] Missing WiFi SSID or GCal URL. Aborting.");
+        return;
+    }
+
+    displayMgr.turnOnTFT();
+    displayMgr.drawDirectColorFrame(TFT_NAVY); // Indicate syncing state visually
+
+    LOG_PRINTF("[Sync] Connecting to WiFi: %s\n", wifiSSID);
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(wifiSSID, wifiPassword);
+
+    int attempts = 0;
+    while (WiFi.status() != WL_CONNECTED && attempts < 20) {
+        delay(500);
+        Serial.print(".");
+        attempts++;
+    }
+    Serial.println();
+
+    if (WiFi.status() != WL_CONNECTED) {
+        LOG_PRINTLN("[Sync] Failed to connect to WiFi.");
+        WiFi.mode(WIFI_OFF);
+        return;
+    }
+    LOG_PRINTLN("[Sync] WiFi Connected!");
+
+    // Fetch Calendar Events
+    LOG_PRINTF("[Sync] Fetching Calendar from: %s\n", gcalURL);
+    HTTPClient http;
+    http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+    http.begin(gcalURL);
+    int httpCode = http.GET();
+
+    if (httpCode > 0) {
+        if (httpCode == HTTP_CODE_OK) {
+            String payload = http.getString();
+            LOG_PRINTLN("[Sync] Received JSON payload. Parsing...");
+
+            // Parse JSON
+            DynamicJsonDocument doc(8192); // ~8KB for a batch of events
+            DeserializationError error = deserializeJson(doc, payload);
+
+            if (error) {
+                LOG_PRINTF("[Sync] deserializeJson() failed: %s\n", error.c_str());
+            } else {
+                // Clear old synced events (those not linked to a local task)
+                uint32_t newCount = 0;
+                CalendarEvent tempEvents[MAX_CALENDAR_EVENTS];
+
+                // Keep locally created / task-linked events
+                for (uint32_t i = 0; i < calendarEventCount; i++) {
+                    if (calendarEvents[i].linkedTaskId != 0) {
+                        tempEvents[newCount++] = calendarEvents[i];
+                    }
+                }
+
+                // Add new remote events
+                JsonArray events = doc.as<JsonArray>();
+                for (JsonObject event : events) {
+                    if (newCount >= MAX_CALENDAR_EVENTS) break;
+
+                    const char* title = event["title"] | "Busy";
+                    int year = event["year"] | calYear;
+                    int month = event["month"] | calMonth;
+                    int day = event["day"] | calDay;
+                    int hour = event["hour"] | 9;
+                    int minute = event["minute"] | 0;
+                    int duration = event["duration"] | 60;
+                    const char* notes = event["notes"] | "";
+                    const char* location = event["location"] | "";
+
+                    tempEvents[newCount++] = CalendarEvent(title, year, month, day, hour, minute, duration, notes, location, 0);
+                }
+
+                // Copy back
+                calendarEventCount = newCount;
+                for (uint32_t i = 0; i < calendarEventCount; i++) {
+                    calendarEvents[i] = tempEvents[i];
+                }
+
+                LOG_PRINTF("[Sync] Calendar updated. Total events: %d\n", calendarEventCount);
+            }
+        } else {
+            LOG_PRINTF("[Sync] HTTP GET failed, error: %s\n", http.errorToString(httpCode).c_str());
+        }
+    } else {
+        LOG_PRINTF("[Sync] HTTP Connection failed, error: %s\n", http.errorToString(httpCode).c_str());
+    }
+
+    http.end();
+
+    // Disconnect
+    WiFi.disconnect(true);
+    WiFi.mode(WIFI_OFF);
+    LOG_PRINTLN("[Sync] Complete. WiFi powered off.");
+    uiDirty = true;
+}
+
+static void handleUISettingsEvent(const SystemEvent& event) {
+    if (isEditingSetting) {
+        switch (event.type) {
+            case SystemEventType::EVENT_CANCEL:
+                isEditingSetting = false;
+                uiDirty = true;
+                break;
+            case SystemEventType::EVENT_BACKSPACE:
+                if (inputBufferLen > 0) {
+                    inputBuffer[--inputBufferLen] = '\0';
+                    uiDirty = true;
+                }
+                break;
+            case SystemEventType::EVENT_SELECT:
+                // Save from inputBuffer to appropriate variable
+                if (settingsSelectedIndex == 3) {
+                    strncpy(wifiSSID, inputBuffer, INPUT_BUFFER_SIZE);
+                    wifiSSID[INPUT_BUFFER_SIZE - 1] = '\0';
+                } else if (settingsSelectedIndex == 4) {
+                    strncpy(wifiPassword, inputBuffer, INPUT_BUFFER_SIZE);
+                    wifiPassword[INPUT_BUFFER_SIZE - 1] = '\0';
+                } else if (settingsSelectedIndex == 5) {
+                    strncpy(gcalURL, inputBuffer, INPUT_BUFFER_SIZE);
+                    gcalURL[INPUT_BUFFER_SIZE - 1] = '\0';
+                }
+                isEditingSetting = false;
+                uiDirty = true;
+                break;
+            case SystemEventType::EVENT_TYPE_CHAR: {
+                char c = (char)event.param;
+                if (inputBufferLen < INPUT_BUFFER_SIZE - 1 && c >= 0x20 && c <= 0x7E) {
+                    inputBuffer[inputBufferLen++] = c;
+                    inputBuffer[inputBufferLen] = '\0';
+                    uiDirty = true;
+                }
+                break;
+            }
+            default:
+                break;
+        }
+        return; // Don't process navigation events while editing text
+    }
+
+    switch (event.type) {
+        case SystemEventType::EVENT_CANCEL:
+        case SystemEventType::EVENT_BACKSPACE:
+            currentState = previousState;
+            saveTasks(); // Save settings when exiting
+            uiDirty = true;
+            break;
+
+        case SystemEventType::SLEEP_REQ:
+            enterSleepMode();
+            break;
+
+        case SystemEventType::EVENT_NAV_UP:
+            if (settingsSelectedIndex > 0) {
+                settingsSelectedIndex--;
+                uiDirty = true;
+            }
+            break;
+
+        case SystemEventType::EVENT_NAV_DOWN:
+            if (settingsSelectedIndex < 6) { // We have 7 settings
+                settingsSelectedIndex++;
+                uiDirty = true;
+            }
+            break;
+
+        case SystemEventType::EVENT_NAV_LEFT:
+            if (settingsSelectedIndex == 0) { // Brightness
+                if (tftBrightness >= 25) tftBrightness -= 25;
+                else tftBrightness = 0;
+                displayMgr.setTFTBrightness(tftBrightness);
+                uiDirty = true;
+            } else if (settingsSelectedIndex == 1) { // AutoSleep
+                if (autoSleepMinutes > 0) autoSleepMinutes--;
+                uiDirty = true;
+            } else if (settingsSelectedIndex == 2) { // LowPower
+                isLowPowerMode = false;
+                setLowPowerMode(isLowPowerMode);
+                uiDirty = true;
+            }
+            break;
+
+        case SystemEventType::EVENT_NAV_RIGHT:
+            if (settingsSelectedIndex == 0) { // Brightness
+                if (tftBrightness <= 230) tftBrightness += 25;
+                else tftBrightness = 255;
+                displayMgr.setTFTBrightness(tftBrightness);
+                uiDirty = true;
+            } else if (settingsSelectedIndex == 1) { // AutoSleep
+                if (autoSleepMinutes < 60) autoSleepMinutes++;
+                uiDirty = true;
+            } else if (settingsSelectedIndex == 2) { // LowPower
+                isLowPowerMode = true;
+                setLowPowerMode(isLowPowerMode);
+                uiDirty = true;
+            }
+            break;
+
+        case SystemEventType::EVENT_SELECT:
+            if (settingsSelectedIndex == 6) {
+                syncGoogleCalendar();
+                uiDirty = true;
+            } else if (settingsSelectedIndex >= 3 && settingsSelectedIndex <= 5) {
+                // Enter edit mode
+                isEditingSetting = true;
+                inputBufferLen = 0;
+                if (settingsSelectedIndex == 3) {
+                    strncpy(inputBuffer, wifiSSID, INPUT_BUFFER_SIZE);
+                } else if (settingsSelectedIndex == 4) {
+                    strncpy(inputBuffer, wifiPassword, INPUT_BUFFER_SIZE);
+                } else if (settingsSelectedIndex == 5) {
+                    strncpy(inputBuffer, gcalURL, INPUT_BUFFER_SIZE);
+                }
+                inputBufferLen = strlen(inputBuffer);
+                uiDirty = true;
+            }
+            break;
+
         default:
             break;
     }
@@ -1153,6 +1458,10 @@ void handleSleepState() {
 }
 
 void setup() {
+    // Disable unused radios to save significant power
+    WiFi.mode(WIFI_OFF);
+    btStop();
+
     // Give serial a moment to initialize before beginning
     delay(2000); 
     Serial.begin(115200);
@@ -1208,12 +1517,6 @@ void setup() {
     displayMgr.drawTestFullRed();
 #endif
 
-// Overlay diagnostic to verify end-to-end render path (cross on screen)
-//#ifdef STike_SYSTEM_TEST
-//    Serial.println("[SYS_TEST] Triggering diagnostic overlay");
-//    displayMgr.drawTestOverlay();
-//#endif
-
 // Direct diagnostic path: drawMagenta directly bypassing the sprite to confirm TFT path
 #ifdef STike_SYSTEM_TEST
     Serial.println("[SYS_TEST] Triggering direct color frame (MAGENTA) bypass sprite");
@@ -1230,7 +1533,16 @@ void setup() {
 
 
     // Load tasks from NVS
-    loadTasks();
+
+    // Load Settings
+    prefs.begin("stike", true);
+    tftBrightness = prefs.getUChar("brightness", 255);
+    autoSleepMinutes = prefs.getUShort("autoSleep", 5);
+    prefs.getString("wifiSSID", "").toCharArray(wifiSSID, INPUT_BUFFER_SIZE);
+    prefs.getString("wifiPass", "").toCharArray(wifiPassword, INPUT_BUFFER_SIZE);
+    prefs.getString("gcalURL", "").toCharArray(gcalURL, INPUT_BUFFER_SIZE);
+    prefs.end();
+loadTasks();
     if (taskCount == 0) {
         addDemoTasks();
         LOG_PRINTLN("[Setup] No saved tasks found, using demo tasks");
@@ -1266,10 +1578,18 @@ void loop() {
     #endif
     // TEST_END: Systems Test
     
+
     if (currentState == SystemState::STATE_SLEEP) {
         handleSleepState();
         return;
     }
+
+    // Auto-sleep logic
+    if (autoSleepMinutes > 0 && millis() - lastInputTime > (uint32_t)autoSleepMinutes * 60000) {
+        enterSleepMode();
+        return;
+    }
+
 
     // Drain all pending events, dispatching by current UI state
     SystemEvent event;
@@ -1299,12 +1619,24 @@ void loop() {
             case SystemState::STATE_UI_QUICK_ADD:
                 handleUIQuickAddEvent(event);
                 break;
+            case SystemState::STATE_UI_SETTINGS:
+                handleUISettingsEvent(event);
+                break;
             case SystemState::STATE_UI_HELP:
                 handleUIHelpEvent(event);
                 break;
             default:
                 break;
         }
+
+        // Global handler for Settings
+        if (event.type == SystemEventType::EVENT_TYPE_CHAR && event.param == 0x9B) {
+            previousState = currentState;
+            currentState = SystemState::STATE_UI_SETTINGS;
+            settingsSelectedIndex = 0;
+            uiDirty = true;
+        }
+
         // A sleep transition mid-drain: stop processing immediately
         if (currentState == SystemState::STATE_SLEEP) {
             return;
@@ -1358,11 +1690,14 @@ void loop() {
             case SystemState::STATE_UI_QUICK_ADD:
                 displayMgr.drawQuickAddGUI(inputBuffer);
                 break;
+            case SystemState::STATE_UI_SETTINGS:
+                displayMgr.drawSettingsGUI(settingsSelectedIndex, tftBrightness, autoSleepMinutes, wifiSSID, wifiPassword, gcalURL, isEditingSetting, inputBuffer, isLowPowerMode);
+                break;
             default:
                 break;
         }
         uiDirty = false;
     }
 
-    delay(50);
+    delay(isLowPowerMode ? 100 : 50);
 }
