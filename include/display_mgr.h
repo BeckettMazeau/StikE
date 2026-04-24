@@ -29,9 +29,10 @@ public:
     void drawActiveGUI(const TaskItem tasks[], uint32_t taskCount, int selectedIndex, int topIndex = 0, int viewMode = 0);
     void drawAddViewGUI(const char* currentInput, int activeField, bool hasDue, int y, int m, int d, int h, int min);
     void drawEditViewGUI(const char* currentInput, int activeField, bool hasDue, int y, int m, int d, int h, int min);
+    void drawQuickAddGUI(const char* currentInput);
     void drawAlignGUI();
     void drawCalendarGUI(CalendarView view, int year, int month, int day, const CalendarEvent events[], uint32_t eventCount, int selectedEventIdx);
-    void drawEventDetailGUI(const CalendarEvent& event);
+    void drawEventDetailGUI(const CalendarEvent& event, int scrollOffset = 0);
     void drawHelpGUI(SystemState fromState);
     void drawAddEventGUI(const char* title, int hour, int duration, int activeField);
     void clearFullHardwareScreen();
@@ -50,6 +51,12 @@ public:
     TFT_eSPI& getTFT() { return tft; }
     bool isTFTOn() const { return tftOn; }
 
+    void updateAnimations();
+    bool isAnimating() const;
+
+    void pushDirtySprite(int x, int y);
+    void forceFullRedraw();
+
 private:
     TFT_eSPI tft;
     TFT_eSprite* guiSprite;
@@ -58,6 +65,12 @@ private:
     bool tftOn;
     EpaperViewItem epaperViews[EPAPER_VIEW_COUNT];
     uint32_t epaperViewCount;
+
+    float currentSelectionY;
+    float targetSelectionY;
+
+    uint32_t rowHashes[160]; // Max height in any rotation
+    bool fullRedrawPending;
 
     void drawEpaperView(int index);
 };
