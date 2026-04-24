@@ -119,6 +119,7 @@ void keyboardTask(void* parameter) {
         if (keyboardMgr.isAvailable()) {
             char key = keyboardMgr.getKeyPress();
             if (key != 0) {
+                lastInputTime = millis();
                 uint8_t k = static_cast<uint8_t>(key);
                 switch (k) {
                     case 0xB4: // Left arrow
@@ -156,6 +157,9 @@ void keyboardTask(void* parameter) {
                     case 0xA8: // Fn + C — trigger calendar mode
                         sendSystemEvent(SystemEventType::EVENT_TYPE_CHAR, 0xA8);
                         break;
+                    case 0x9B: // Fn + S — Settings
+                        sendSystemEvent(SystemEventType::EVENT_TYPE_CHAR, 0x9B);
+                        break;
                     case 0x9F: // Fn + H — trigger help screen
                         sendSystemEvent(SystemEventType::EVENT_TYPE_CHAR, 0x9F);
                         break;
@@ -179,9 +183,13 @@ void saveTasks() {
     
     // Save the entire tasks array as a binary blob for speed and efficiency
     prefs.putBytes("tasks_blob", tasks, sizeof(tasks));
+
+    // Save settings
+    prefs.putUChar("brightness", tftBrightness);
+    prefs.putUShort("autoSleep", autoSleepMinutes);
     
     prefs.end();
-    LOG_PRINTLN("[NVS] Tasks saved as blob");
+    LOG_PRINTLN("[NVS] Tasks and settings saved as blob");
 }
 
 // Forward declaration - defined later in this file
@@ -197,6 +205,12 @@ void cleanupOldCompletedTasks() {
 void loadTasks() {
     prefs.begin("stike", true);
     taskCount = prefs.getUInt("taskCount", 0);
+
+    // Load Settings
+    tftBrightness = prefs.getUChar("brightness", 255);
+    autoSleepMinutes = prefs.getUShort("autoSleep", 5);
+    displayMgr.setTFTBrightness(tftBrightness);
+
     if (taskCount > MAX_TASKS) taskCount = MAX_TASKS;
     
     // Try to load the blob
@@ -312,6 +326,7 @@ void wakeToActive() {
     LOG_PRINTLN("[State] Waking to ACTIVE mode");
 
     displayMgr.turnOnTFT();
+    displayMgr.setTFTBrightness(tftBrightness);
     currentState = SystemState::STATE_UI_LIST;
     currentTaskView = TaskViewMode::ACTIVE;
     updateFilteredTasks();
@@ -554,6 +569,11 @@ static void handleUIAddTaskEvent(const SystemEvent& event) {
                 previousState = currentState;
                 currentState = SystemState::STATE_UI_HELP;
                 uiDirty = true;
+            } else if (event.param == 0x9B) { // Fn + S
+                previousState = currentState;
+                currentState = SystemState::STATE_UI_SETTINGS;
+                settingsSelectedIndex = 0;
+                uiDirty = true;
             }
             break;
         }
@@ -657,6 +677,11 @@ static void handleUIEditTaskEvent(const SystemEvent& event) {
                 previousState = currentState;
                 currentState = SystemState::STATE_UI_HELP;
                 uiDirty = true;
+            } else if (event.param == 0x9B) { // Fn + S
+                previousState = currentState;
+                currentState = SystemState::STATE_UI_SETTINGS;
+                settingsSelectedIndex = 0;
+                uiDirty = true;
             }
             break;
         }
@@ -748,6 +773,11 @@ static void handleUIAlignEvent(const SystemEvent& event) {
             if (event.param == 0x9F) { // Fn + H
                 previousState = currentState;
                 currentState = SystemState::STATE_UI_HELP;
+                uiDirty = true;
+            } else if (event.param == 0x9B) { // Fn + S
+                previousState = currentState;
+                currentState = SystemState::STATE_UI_SETTINGS;
+                settingsSelectedIndex = 0;
                 uiDirty = true;
             }
             break;
@@ -900,6 +930,11 @@ static void handleUICalendarEvent(const SystemEvent& event) {
                 previousState = currentState;
                 currentState = SystemState::STATE_UI_HELP;
                 uiDirty = true;
+            } else if (event.param == 0x9B) { // Fn + S
+                previousState = currentState;
+                currentState = SystemState::STATE_UI_SETTINGS;
+                settingsSelectedIndex = 0;
+                uiDirty = true;
             } else if (event.param == 0x7F) { // Delete
                 if (currentCalendarView == CalendarView::DAY && selectedEventIndex >= 0) {
                     int dayIdx = 0;
@@ -958,6 +993,11 @@ static void handleUIAddEventEvent(const SystemEvent& event) {
             if (c == 0x9F) { // Fn + H
                 previousState = currentState;
                 currentState = SystemState::STATE_UI_HELP;
+                uiDirty = true;
+            } else if (c == 0x9B) { // Fn + S
+                previousState = currentState;
+                currentState = SystemState::STATE_UI_SETTINGS;
+                settingsSelectedIndex = 0;
                 uiDirty = true;
             }
             break;
@@ -1032,6 +1072,11 @@ static void handleUIEventDetailEvent(const SystemEvent& event) {
                 previousState = currentState;
                 currentState = SystemState::STATE_UI_HELP;
                 uiDirty = true;
+            } else if (event.param == 0x9B) { // Fn + S
+                previousState = currentState;
+                currentState = SystemState::STATE_UI_SETTINGS;
+                settingsSelectedIndex = 0;
+                uiDirty = true;
             }
             break;
         default:
@@ -1049,6 +1094,63 @@ static void handleUIHelpEvent(const SystemEvent& event) {
         case SystemEventType::SLEEP_REQ:
             enterSleepMode();
             break;
+        default:
+            break;
+    }
+}
+
+
+static void handleUISettingsEvent(const SystemEvent& event) {
+    switch (event.type) {
+        case SystemEventType::EVENT_CANCEL:
+        case SystemEventType::EVENT_BACKSPACE:
+            currentState = previousState;
+            saveTasks(); // Save settings when exiting
+            uiDirty = true;
+            break;
+
+        case SystemEventType::SLEEP_REQ:
+            enterSleepMode();
+            break;
+
+        case SystemEventType::EVENT_NAV_UP:
+            if (settingsSelectedIndex > 0) {
+                settingsSelectedIndex--;
+                uiDirty = true;
+            }
+            break;
+
+        case SystemEventType::EVENT_NAV_DOWN:
+            if (settingsSelectedIndex < 1) { // We have 2 settings: 0=Brightness, 1=AutoSleep
+                settingsSelectedIndex++;
+                uiDirty = true;
+            }
+            break;
+
+        case SystemEventType::EVENT_NAV_LEFT:
+            if (settingsSelectedIndex == 0) { // Brightness
+                if (tftBrightness >= 25) tftBrightness -= 25;
+                else tftBrightness = 0;
+                displayMgr.setTFTBrightness(tftBrightness);
+                uiDirty = true;
+            } else if (settingsSelectedIndex == 1) { // AutoSleep
+                if (autoSleepMinutes > 0) autoSleepMinutes--;
+                uiDirty = true;
+            }
+            break;
+
+        case SystemEventType::EVENT_NAV_RIGHT:
+            if (settingsSelectedIndex == 0) { // Brightness
+                if (tftBrightness <= 230) tftBrightness += 25;
+                else tftBrightness = 255;
+                displayMgr.setTFTBrightness(tftBrightness);
+                uiDirty = true;
+            } else if (settingsSelectedIndex == 1) { // AutoSleep
+                if (autoSleepMinutes < 60) autoSleepMinutes++;
+                uiDirty = true;
+            }
+            break;
+
         default:
             break;
     }
@@ -1266,10 +1368,18 @@ void loop() {
     #endif
     // TEST_END: Systems Test
     
+
     if (currentState == SystemState::STATE_SLEEP) {
         handleSleepState();
         return;
     }
+
+    // Auto-sleep logic
+    if (autoSleepMinutes > 0 && millis() - lastInputTime > (uint32_t)autoSleepMinutes * 60000) {
+        enterSleepMode();
+        return;
+    }
+
 
     // Drain all pending events, dispatching by current UI state
     SystemEvent event;
@@ -1298,6 +1408,9 @@ void loop() {
                 break;
             case SystemState::STATE_UI_QUICK_ADD:
                 handleUIQuickAddEvent(event);
+                break;
+            case SystemState::STATE_UI_SETTINGS:
+                handleUISettingsEvent(event);
                 break;
             case SystemState::STATE_UI_HELP:
                 handleUIHelpEvent(event);
@@ -1357,6 +1470,9 @@ void loop() {
                 break;
             case SystemState::STATE_UI_QUICK_ADD:
                 displayMgr.drawQuickAddGUI(inputBuffer);
+                break;
+            case SystemState::STATE_UI_SETTINGS:
+                displayMgr.drawSettingsGUI(settingsSelectedIndex, tftBrightness, autoSleepMinutes);
                 break;
             default:
                 break;

@@ -1411,3 +1411,64 @@ void DisplayManager::drawAddEventGUI(const char* title, int hour, int duration, 
 }
 
 
+
+void DisplayManager::setTFTBrightness(uint8_t brightness) {
+    analogWrite(Pins::LCD_BL, brightness);
+}
+
+void DisplayManager::drawSettingsGUI(int selectedItem, uint8_t brightness, uint16_t sleepTimeout) {
+    if (!tftOn) return;
+
+    guiSprite->fillSprite(TFT_BLACK);
+
+    // Title Bar
+    guiSprite->fillRect(0, 0, 160, 14, TFT_ORANGE);
+    guiSprite->setTextColor(TFT_BLACK);
+    guiSprite->setTextDatum(TL_DATUM);
+    guiSprite->drawString(" SYSTEM SETTINGS", 2, 3);
+
+    // Help hint
+    guiSprite->setTextColor(0x7BEF); // Light Gray
+    guiSprite->drawString("ESC: Exit  < >: Change", 2, 114);
+
+    guiSprite->setTextColor(TFT_WHITE);
+    guiSprite->setTextDatum(ML_DATUM);
+
+    // Settings Items
+    const int itemHeight = 20;
+    const int startY = 30;
+
+    for (int i = 0; i < 2; i++) {
+        int y = startY + (i * itemHeight);
+
+        if (i == selectedItem) {
+            guiSprite->fillRect(0, y - 10, 160, itemHeight, 0x3186); // Dark Gray
+            guiSprite->drawRect(0, y - 10, 160, itemHeight, TFT_ORANGE);
+            guiSprite->setTextColor(TFT_ORANGE);
+        } else {
+            guiSprite->setTextColor(TFT_WHITE);
+        }
+
+        if (i == 0) {
+            guiSprite->drawString("Brightness", 5, y);
+            char valStr[16];
+            snprintf(valStr, sizeof(valStr), "%d", brightness);
+            guiSprite->setTextDatum(MR_DATUM);
+            guiSprite->drawString(valStr, 155, y);
+            guiSprite->setTextDatum(ML_DATUM);
+        } else if (i == 1) {
+            guiSprite->drawString("Auto-Sleep", 5, y);
+            char valStr[16];
+            if (sleepTimeout == 0) {
+                snprintf(valStr, sizeof(valStr), "Never");
+            } else {
+                snprintf(valStr, sizeof(valStr), "%d min", sleepTimeout);
+            }
+            guiSprite->setTextDatum(MR_DATUM);
+            guiSprite->drawString(valStr, 155, y);
+            guiSprite->setTextDatum(ML_DATUM);
+        }
+    }
+
+    pushDirtySprite(0, 0);
+}
