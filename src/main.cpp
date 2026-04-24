@@ -1,21 +1,19 @@
 #include <Arduino.h>
+#include <esp_sleep.h>
+#include <esp_log.h>
 #include <Preferences.h>
 #include <WiFi.h>
-#include <esp_log.h>
-#include <esp_sleep.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 #include <freertos/task.h>
-
 #include "display_mgr.h"
 #include "keyboard_mgr.h"
 #include "pins.h"
 #include "power_mgr.h"
 #include "state_types.h"
-
-#include <ArduinoJson.h>
 #include <HTTPClient.h>
-#include <WiFi.h>
+#include <ArduinoJson.h>
+
 
 // TEST_START: Systems Test
 #ifdef STike_SYSTEM_TEST
