@@ -12,6 +12,7 @@ enum class SystemState {
     STATE_UI_EDIT_TASK,
     STATE_UI_EVENT_DETAIL,
     STATE_UI_HELP,
+    STATE_UI_QUICK_ADD,
     STATE_SLEEP,
     STATE_EPAPER_UPDATE
 };
@@ -56,6 +57,7 @@ enum class SystemEventType {
     EVENT_SELECT,
     EVENT_TYPE_CHAR,
     EVENT_BACKSPACE,
+    EVENT_CANCEL,
     SLEEP_REQ,
     WAKE_REQ
 };
@@ -115,7 +117,7 @@ struct EpaperItem {
     EpaperItem() : type(EpaperViewType::TASK) {}
 };
 
-constexpr uint32_t ITEMS_PER_EPAPER_SCREEN = 3;
+constexpr uint32_t ITEMS_PER_EPAPER_SCREEN = 6;
 
 struct EpaperViewItem {
     EpaperItem items[ITEMS_PER_EPAPER_SCREEN];

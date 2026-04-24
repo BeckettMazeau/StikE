@@ -35,6 +35,9 @@
 - Performed system-wide sanitization of internal documentation.
 
 ### Phase 7: User Experience Optimization
+- Standardized navigation: 'ESC' as global Cancel/Back, 'Fn + ESC' as Sleep.
+- Implemented 'Quick Add' mode with natural language time parsing (@time).
+- Reserved 'Backspace' exclusively for text field editing.
 - Conceptualized system-wide UX improvements for navigation and feedback.
 - Audited UI state machine for consistency and visual density.
 - Identified opportunities for power efficiency and state persistence hardening.
