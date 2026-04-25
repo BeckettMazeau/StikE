@@ -1603,3 +1603,130 @@ void DisplayManager::drawInputBox(int x, int y, int w, int h, const char* text, 
     }
 }
 
+void DisplayManager::drawPomodoroGUI(int workMins, int breakMins, bool isRunning, bool isWorkMode, uint32_t secondsRemaining, int activeField, int selectedTaskId, const TaskItem tasks[], uint32_t taskCount) {
+    if (!guiSprite) return;
+
+    const int W = guiSprite->width();
+    const int H = guiSprite->height();
+    const uint16_t headerStart = guiSprite->color565(220, 30, 30); // Vibrant Red
+    const uint16_t headerEnd   = guiSprite->color565(120, 0, 0);
+    const uint16_t selectColor = guiSprite->color565(255, 200, 0); // Golden Yellow
+    const uint16_t idleColor   = guiSprite->color565(60, 60, 60);
+
+    guiSprite->fillSprite(TFT_BLACK);
+
+    // Header
+    drawVGradient(guiSprite, 0, 0, W, HEADER_H, headerStart, headerEnd);
+    guiSprite->setTextColor(TFT_WHITE);
+    guiSprite->setCursor(4, 3);
+    guiSprite->print("Focus Timer");
+
+    int curY = HEADER_H + 12;
+
+    // Helper for drawing fields
+    auto drawField = [&](const char* label, const char* value, int fieldIdx, int y) {
+        guiSprite->setTextColor(TFT_WHITE);
+        guiSprite->setCursor(10, y);
+        guiSprite->print(label);
+        
+        uint16_t bgColor = (activeField == fieldIdx) ? selectColor : idleColor;
+        guiSprite->fillRoundRect(70, y - 2, W - 80, 15, 3, bgColor);
+        guiSprite->setTextColor(activeField == fieldIdx ? TFT_BLACK : TFT_WHITE);
+        guiSprite->setCursor(75, y);
+        guiSprite->print(value);
+    };
+
+    // Work Minutes
+    char buf[32];
+    snprintf(buf, sizeof(buf), "%d Minutes", workMins);
+    drawField("Work:", buf, 0, curY);
+    curY += 20;
+
+    // Break Minutes
+    snprintf(buf, sizeof(buf), "%d Minutes", breakMins);
+    drawField("Break:", buf, 1, curY);
+    curY += 20;
+
+    // Task Selection
+    const char* taskTitle = "None (Select)";
+    if (selectedTaskId >= 0 && selectedTaskId < (int)taskCount) {
+        taskTitle = tasks[selectedTaskId].title;
+    }
+    char trunc[24];
+    strncpy(trunc, taskTitle, 23); trunc[23] = '\0';
+    drawField("Task:", trunc, 2, curY);
+    curY += 25;
+
+    // Status / Timer
+    if (isRunning) {
+        guiSprite->setTextColor(isWorkMode ? TFT_RED : TFT_GREEN);
+        guiSprite->setCursor(W / 2 - 35, curY);
+        guiSprite->setTextSize(2);
+        guiSprite->printf("%02d:%02d", secondsRemaining / 60, secondsRemaining % 60);
+        guiSprite->setTextSize(1);
+        guiSprite->setCursor(W / 2 - 20, curY + 18);
+        guiSprite->print(isWorkMode ? "WORK" : "BREAK");
+    } else {
+        uint16_t btnColor = (activeField == 3) ? selectColor : idleColor;
+        guiSprite->fillRoundRect(W / 2 - 40, curY, 80, 20, 5, btnColor);
+        guiSprite->setTextColor(activeField == 3 ? TFT_BLACK : TFT_WHITE);
+        guiSprite->setCursor(W / 2 - 15, curY + 6);
+        guiSprite->print("START");
+    }
+
+    // Footer
+    drawVGradient(guiSprite, 0, H - FOOTER_H, W, FOOTER_H, headerStart, headerEnd);
+    guiSprite->setTextColor(TFT_WHITE);
+    guiSprite->setCursor(4, H - FOOTER_H + 6);
+    guiSprite->print("[ENT]Select [BS]Exit");
+
+    pushDirtySprite(offsetX, offsetY);
+}
+
+void DisplayManager::drawEpaperPomodoro(int minutes, int seconds, bool isWorkMode, const char* taskTitle, bool fullRefresh) {
+    // Re-assert ePaper SPI bus
+    SPI.begin(Pins::EP_SCK, -1, Pins::EP_MOSI, Pins::EP_CS);
+    epd.init(115200);
+    epd.setRotation(1);
+    
+    const int W = epd.width();
+    const int H = epd.height();
+
+    if (fullRefresh) {
+        epd.setFullWindow();
+    } else {
+        // Targeted partial window for the timer digits only (approx 130x40 at center)
+        epd.setPartialWindow(W / 2 - 65, H / 2 - 15, 130, 40);
+    }
+
+    epd.firstPage();
+    do {
+        epd.fillScreen(GxEPD_WHITE);
+        
+        // Frame
+        epd.drawRect(5, 5, W - 10, H - 10, GxEPD_BLACK);
+        epd.drawRect(7, 7, W - 14, H - 14, GxEPD_BLACK);
+        
+        // Mode Title
+        epd.setTextSize(2);
+        epd.setCursor(W / 2 - 40, 15);
+        epd.print(isWorkMode ? "WORK" : "BREAK");
+        
+        // Timer
+        epd.setTextSize(4);
+        char timeBuf[16];
+        snprintf(timeBuf, sizeof(timeBuf), "%02d:%02d", minutes, seconds);
+        epd.setCursor(W / 2 - 60, H / 2 - 10);
+        epd.print(timeBuf);
+        
+        // Task Title
+        epd.setTextSize(1);
+        epd.setCursor(15, H - 25);
+        epd.print("Task: ");
+        epd.print(taskTitle);
+        
+    } while (epd.nextPage());
+
+    epd.hibernate();
+}
+
