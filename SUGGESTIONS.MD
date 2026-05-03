@@ -1,6 +1,6 @@
-# AI Implementation Prompts for StikE
+# Implementation Prompts for StikE
 
-This document contains structured prompts that can be provided to an AI coding agent to implement specific feature enhancements for the StikE project.
+This document contains structured prompts that can be provided to a junior developer to implement specific feature enhancements for the StikE project.
 
 ---
 
