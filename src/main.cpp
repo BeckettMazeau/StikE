@@ -3,7 +3,6 @@
 #include <WiFi.h>
 #include <esp_log.h>
 #include <Preferences.h>
-#include <WiFi.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 #include <freertos/task.h>
@@ -18,7 +17,7 @@
 
 // TEST_START: Systems Test
 #ifdef STike_SYSTEM_TEST
-#include "systems_test.h"
+#include "../tests/systems_test.h"
 #endif
 // TEST_END: Systems Test
 
@@ -1667,6 +1666,7 @@ void handleSleepState() {
 
   // DO NOT power down VDDSDIO during light sleep! It crashes the flash memory
   // causing a reboot (which explains the random color flashing on wake).
+  // TODO: Potential Dead Code
   // esp_sleep_pd_config(ESP_PD_DOMAIN_VDDSDIO, ESP_PD_OPTION_OFF);
 
   // Enter light sleep
