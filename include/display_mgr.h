@@ -42,6 +42,8 @@ public:
     void drawEventDetailGUI(const CalendarEvent& event, int scrollOffset = 0);
     void drawHelpGUI(SystemState fromState);
     void drawAddEventGUI(const char* title, int cursorIdx, int hour, int duration, int activeField);
+    void drawPomodoroGUI(int workMins, int breakMins, bool isRunning, bool isWorkMode, uint32_t secondsRemaining, int activeField, int selectedTaskId, const TaskItem tasks[], uint32_t taskCount);
+    void drawEpaperPomodoro(int minutes, int seconds, bool isWorkMode, const char* taskTitle, bool fullRefresh = false);
     void clearFullHardwareScreen();
     // Smoke test drawing path for diagnostics
     void drawSmokeTest();

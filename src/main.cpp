@@ -97,6 +97,18 @@ int taskEditDay = 24;
 int taskEditHour = 9;
 int taskEditMinute = 0;
 
+// Pomodoro state
+int pomodoroWorkMinutes = 25;
+int pomodoroBreakMinutes = 5;
+bool pomodoroIsRunning = false;
+bool pomodoroIsWorkMode = true;
+uint32_t pomodoroSecondsRemaining = 25 * 60;
+uint32_t pomodoroLastMillis = 0;
+int pomodoroSelectedTaskId = -1; // -1 for none
+int pomodoroConfigField = 0; // 0: Work, 1: Break, 2: Task, 3: Start/Stop
+uint32_t pomodoroLastEpaperUpdate = 0;
+uint32_t pomodoroLastPartialUpdate = 0;
+
 // Redraw only after an event mutates state
 bool uiDirty = true;
 
@@ -204,6 +216,9 @@ void keyboardTask(void* parameter) {
                         break;
                     case 0x9F: // Fn + H — trigger help screen
                         sendSystemEvent(SystemEventType::EVENT_TYPE_CHAR, 0x9F);
+                        break;
+                    case 0x96: // Fn + P — Pomodoro
+                        sendSystemEvent(SystemEventType::EVENT_TYPE_CHAR, 0x96);
                         break;
                     default:
                         if (k >= 0x20 && k <= 0x7E) {
@@ -588,6 +603,12 @@ static void handleUIListEvent(const SystemEvent &event) {
     else if (event.param == 0x9F) {
       previousState = currentState;
       currentState = SystemState::STATE_UI_HELP;
+      uiDirty = true;
+    }
+    // 0x96 (Fn+P) opens Pomodoro
+    else if (event.param == 0x96) {
+      LOG_PRINTLN("[Input] Fn+P - entering Pomodoro mode");
+      currentState = SystemState::STATE_UI_POMODORO;
       uiDirty = true;
     }
     break;
@@ -1533,6 +1554,93 @@ static void handleUIQuickAddEvent(const SystemEvent& event) {
     }
 }
 
+static void handleUIPomodoroEvent(const SystemEvent& event) {
+    // Any key wakes and pauses if running and TFT is off
+    if (pomodoroIsRunning && !displayMgr.isTFTOn()) {
+        pomodoroIsRunning = false;
+        displayMgr.turnOnTFT();
+        displayMgr.setTFTBrightness(tftBrightness);
+        uiDirty = true;
+        LOG_PRINTLN("[Pomodoro] Woke and paused by key press");
+        return; 
+    }
+
+    switch (event.type) {
+        case SystemEventType::EVENT_CANCEL:
+            if (pomodoroIsRunning) {
+                pomodoroIsRunning = false;
+            } else {
+                currentState = SystemState::STATE_UI_LIST;
+            }
+            uiDirty = true;
+            break;
+
+        case SystemEventType::EVENT_BACKSPACE:
+            if (!pomodoroIsRunning) {
+                currentState = SystemState::STATE_UI_LIST;
+                uiDirty = true;
+            }
+            break;
+
+        case SystemEventType::EVENT_NAV_UP:
+            if (pomodoroConfigField == 0) {
+                pomodoroWorkMinutes = (pomodoroWorkMinutes % 60) + 1;
+            } else if (pomodoroConfigField == 1) {
+                pomodoroBreakMinutes = (pomodoroBreakMinutes % 30) + 1;
+            } else if (pomodoroConfigField == 2) {
+                if (pomodoroSelectedTaskId > -1) pomodoroSelectedTaskId--;
+            }
+            uiDirty = true;
+            break;
+
+        case SystemEventType::EVENT_NAV_DOWN:
+            if (pomodoroConfigField == 0) {
+                pomodoroWorkMinutes = (pomodoroWorkMinutes > 1) ? pomodoroWorkMinutes - 1 : 60;
+            } else if (pomodoroConfigField == 1) {
+                pomodoroBreakMinutes = (pomodoroBreakMinutes > 1) ? pomodoroBreakMinutes - 1 : 30;
+            } else if (pomodoroConfigField == 2) {
+                if (pomodoroSelectedTaskId < (int)taskCount - 1) pomodoroSelectedTaskId++;
+            }
+            uiDirty = true;
+            break;
+
+        case SystemEventType::EVENT_SELECT:
+            if (pomodoroConfigField < 3) {
+                pomodoroConfigField++;
+            } else {
+                // Start/Stop
+                pomodoroIsRunning = !pomodoroIsRunning;
+                if (pomodoroIsRunning) {
+                    pomodoroIsWorkMode = true;
+                    pomodoroSecondsRemaining = pomodoroWorkMinutes * 60;
+                    pomodoroLastMillis = millis();
+                    displayMgr.turnOffTFT();
+                    // Initial ePaper update
+                    const char* taskTitle = (pomodoroSelectedTaskId >= 0) ? tasks[pomodoroSelectedTaskId].title : "No Task";
+                    displayMgr.drawEpaperPomodoro(pomodoroWorkMinutes, 0, pomodoroIsWorkMode, taskTitle, true);
+                    pomodoroLastEpaperUpdate = millis();
+                } else {
+                    displayMgr.turnOnTFT();
+                }
+            }
+            uiDirty = true;
+            break;
+
+        case SystemEventType::EVENT_NAV_LEFT:
+            if (pomodoroConfigField > 0) pomodoroConfigField--;
+            uiDirty = true;
+            break;
+
+        case SystemEventType::EVENT_NAV_RIGHT:
+            if (pomodoroConfigField < 3) pomodoroConfigField++;
+            uiDirty = true;
+            break;
+
+        default:
+            break;
+    }
+}
+
 void handleSleepState() {
   LOG_PRINTF("[Sleep] Cycle %u, view %d\n", sleepCycleCount, currentEpaperView);
 
@@ -1704,8 +1812,8 @@ void loop() {
         return;
     }
 
-    // Auto-sleep logic
-    if (autoSleepMinutes > 0 && millis() - lastInputTime > (uint32_t)autoSleepMinutes * 60000) {
+    // Auto-sleep logic - disabled during active Pomodoro session
+    if (!pomodoroIsRunning && autoSleepMinutes > 0 && millis() - lastInputTime > (uint32_t)autoSleepMinutes * 60000) {
         enterSleepMode();
         return;
     }
@@ -1744,6 +1852,9 @@ void loop() {
                 break;
             case SystemState::STATE_UI_HELP:
                 handleUIHelpEvent(event);
+                break;
+            case SystemState::STATE_UI_POMODORO:
+                handleUIPomodoroEvent(event);
                 break;
             default:
                 break;
@@ -1809,10 +1920,57 @@ void loop() {
             case SystemState::STATE_UI_SETTINGS:
                 displayMgr.drawSettingsGUI(settingsSelectedIndex, tftBrightness, autoSleepMinutes, wifiSSID, wifiPassword, gcalURL, isEditingSetting, inputBuffer, (int)inputCursorPos, isLowPowerMode);
                 break;
+            case SystemState::STATE_UI_POMODORO:
+                displayMgr.drawPomodoroGUI(pomodoroWorkMinutes, pomodoroBreakMinutes, pomodoroIsRunning, pomodoroIsWorkMode, pomodoroSecondsRemaining, pomodoroConfigField, pomodoroSelectedTaskId, tasks, taskCount);
+                break;
             default:
                 break;
         }
         uiDirty = false;
+    }
+
+    // Pomodoro Timer Logic
+    if (pomodoroIsRunning) {
+        uint32_t now = millis();
+        if (now - pomodoroLastMillis >= 1000) {
+            uint32_t secondsPassed = (now - pomodoroLastMillis) / 1000;
+            pomodoroLastMillis += secondsPassed * 1000; // Fix drift
+            
+            if (pomodoroSecondsRemaining >= secondsPassed) {
+                pomodoroSecondsRemaining -= secondsPassed;
+            } else {
+                pomodoroSecondsRemaining = 0;
+            }
+
+            if (pomodoroSecondsRemaining == 0) {
+                pomodoroIsWorkMode = !pomodoroIsWorkMode;
+                pomodoroSecondsRemaining = (pomodoroIsWorkMode ? pomodoroWorkMinutes : pomodoroBreakMinutes) * 60;
+                
+                if (!displayMgr.isTFTOn()) {
+                    // Force ePaper full refresh on mode switch
+                    const char* taskTitle = (pomodoroSelectedTaskId >= 0) ? tasks[pomodoroSelectedTaskId].title : "No Task";
+                    displayMgr.drawEpaperPomodoro(pomodoroSecondsRemaining / 60, 0, pomodoroIsWorkMode, taskTitle, true);
+                    pomodoroLastEpaperUpdate = now;
+                    pomodoroLastPartialUpdate = now;
+                }
+            } else if (!displayMgr.isTFTOn()) {
+                // Update ePaper only when TFT is off
+                if (now - pomodoroLastEpaperUpdate >= 60000) {
+                    const char* taskTitle = (pomodoroSelectedTaskId >= 0) ? tasks[pomodoroSelectedTaskId].title : "No Task";
+                    displayMgr.drawEpaperPomodoro(pomodoroSecondsRemaining / 60, pomodoroSecondsRemaining % 60, pomodoroIsWorkMode, taskTitle, true);
+                    pomodoroLastEpaperUpdate = now;
+                    pomodoroLastPartialUpdate = now;
+                } else if (now - pomodoroLastPartialUpdate >= 10000) {
+                    const char* taskTitle = (pomodoroSelectedTaskId >= 0) ? tasks[pomodoroSelectedTaskId].title : "No Task";
+                    displayMgr.drawEpaperPomodoro(pomodoroSecondsRemaining / 60, pomodoroSecondsRemaining % 60, pomodoroIsWorkMode, taskTitle, false);
+                    pomodoroLastPartialUpdate = now;
+                }
+            }
+            
+            if (displayMgr.isTFTOn()) {
+                uiDirty = true;
+            }
+        }
     }
 
     delay(isLowPowerMode ? 100 : 50);

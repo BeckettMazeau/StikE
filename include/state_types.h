@@ -14,6 +14,7 @@ enum class SystemState {
     STATE_UI_HELP,
     STATE_UI_QUICK_ADD,
     STATE_UI_SETTINGS,
+    STATE_UI_POMODORO,
     STATE_SLEEP,
     STATE_EPAPER_UPDATE
 };
