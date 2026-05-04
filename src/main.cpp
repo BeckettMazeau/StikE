@@ -1252,66 +1252,69 @@ void syncGoogleCalendar() {
 
   displayMgr.drawSyncStatus("Fetching Cal...");
   LOG_PRINTF("[Sync] Fetching Calendar from: %s\n", gcalURL);
-  HTTPClient http;
-  http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
-  http.begin(gcalURL);
-  int httpCode = http.GET();
+  
+  {
+    HTTPClient http;
+    http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+    http.begin(gcalURL);
+    int httpCode = http.GET();
 
-  if (httpCode > 0) {
-    if (httpCode == HTTP_CODE_OK) {
-      String payload = http.getString();
-      LOG_PRINTLN("[Sync] Received JSON payload. Parsing...");
+    if (httpCode > 0) {
+      if (httpCode == HTTP_CODE_OK) {
+        String payload = http.getString();
+        LOG_PRINTLN("[Sync] Received JSON payload. Parsing...");
 
-      DynamicJsonDocument doc(8192);
-      DeserializationError error = deserializeJson(doc, payload);
+        DynamicJsonDocument doc(8192);
+        DeserializationError error = deserializeJson(doc, payload);
 
-      if (error) {
-        LOG_PRINTF("[Sync] deserializeJson() failed: %s\n", error.c_str());
-      } else {
-        uint32_t newCount = 0;
-        // tempEvents is now static at function scope
+        if (error) {
+          LOG_PRINTF("[Sync] deserializeJson() failed: %s\n", error.c_str());
+        } else {
+          uint32_t newCount = 0;
+          // tempEvents is now static at function scope
 
-        for (uint32_t i = 0; i < calendarEventCount; i++) {
-          if (calendarEvents[i].linkedTaskId != 0) {
-            tempEvents[newCount++] = calendarEvents[i];
+          for (uint32_t i = 0; i < calendarEventCount; i++) {
+            if (calendarEvents[i].linkedTaskId != 0) {
+              tempEvents[newCount++] = calendarEvents[i];
+            }
           }
+
+          JsonArray events = doc.as<JsonArray>();
+          for (JsonObject e : events) {
+            if (newCount >= MAX_CALENDAR_EVENTS)
+              break;
+            const char* title = e["title"] | "Busy";
+            int year = e["year"] | calYear;
+            int month = e["month"] | calMonth;
+            int day = e["day"] | calDay;
+            int hour = e["hour"] | 9;
+            int minute = e["minute"] | 0;
+            int duration = e["duration"] | 60;
+            const char* notes = e["notes"] | "";
+            const char* location = e["location"] | "";
+
+            tempEvents[newCount++] = CalendarEvent(title, year, month, day, hour, minute, duration, notes, location, 0);
+          }
+
+          calendarEventCount = newCount;
+          for (uint32_t i = 0; i < calendarEventCount; i++) {
+            calendarEvents[i] = tempEvents[i];
+          }
+
+          LOG_PRINTF("[Sync] Calendar updated. Total events: %d\n",
+                     calendarEventCount);
         }
-
-        JsonArray events = doc.as<JsonArray>();
-        for (JsonObject e : events) {
-          if (newCount >= MAX_CALENDAR_EVENTS)
-            break;
-          const char* title = e["title"] | "Busy";
-          int year = e["year"] | calYear;
-          int month = e["month"] | calMonth;
-          int day = e["day"] | calDay;
-          int hour = e["hour"] | 9;
-          int minute = e["minute"] | 0;
-          int duration = e["duration"] | 60;
-          const char* notes = e["notes"] | "";
-          const char* location = e["location"] | "";
-
-          tempEvents[newCount++] = CalendarEvent(title, year, month, day, hour, minute, duration, notes, location, 0);
-        }
-
-        calendarEventCount = newCount;
-        for (uint32_t i = 0; i < calendarEventCount; i++) {
-          calendarEvents[i] = tempEvents[i];
-        }
-
-        LOG_PRINTF("[Sync] Calendar updated. Total events: %d\n",
-                   calendarEventCount);
+      } else {
+        LOG_PRINTF("[Sync] HTTP GET failed, code: %d\n", httpCode);
       }
     } else {
-      LOG_PRINTF("[Sync] HTTP GET failed, error: %s\n",
+      LOG_PRINTF("[Sync] HTTP Connection failed, error: %s\n",
                  http.errorToString(httpCode).c_str());
     }
-  } else {
-    LOG_PRINTF("[Sync] HTTP Connection failed, error: %s\n",
-               http.errorToString(httpCode).c_str());
+
+    http.end();
   }
 
-  http.end();
   displayMgr.drawSyncStatus("Sync Complete!");
   delay(1000); 
   WiFi.mode(WIFI_OFF);
