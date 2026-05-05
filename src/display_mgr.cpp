@@ -241,7 +241,6 @@ bool isWithin24Hours(const CalendarEvent& ev, uint16_t curYear, uint8_t curMonth
 
 }
 
-
 void DisplayManager::prepareEpaperViews(const TaskItem tasks[], uint32_t taskCount,
                                         const CalendarEvent events[], uint32_t eventCount,
                                         uint16_t curYear, uint8_t curMonth, uint8_t curDay, uint8_t curHour) {
@@ -300,7 +299,6 @@ void DisplayManager::prepareEpaperViews(const TaskItem tasks[], uint32_t taskCou
         }
         epaperViewCount++;
     }
-
 
 }
 
@@ -608,52 +606,6 @@ void DisplayManager::drawActiveGUI(const TaskItem tasks[], const int filteredInd
 
 }
 
-void DisplayManager::drawSmokeTest() {
-    if (!guiSprite) {
-        return;
-    }
-    // Simple, bright smoke test to verify draw path end-to-end
-    guiSprite->fillSprite(TFT_MAGENTA);
-    pushDirtySprite(offsetX, offsetY);
-
-}
-
-void DisplayManager::drawTestFullRed() {
-    if (!guiSprite) {
-        return;
-    }
-    guiSprite->fillSprite(TFT_RED);
-    pushDirtySprite(offsetX, offsetY);
-
-}
-
-void DisplayManager::drawTestOverlay() {
-    if (!guiSprite) {
-        return;
-    }
-    // Draw a bright white cross on black to verify overlay rendering
-    const int W = guiSprite->width();
-    const int H = guiSprite->height();
-    guiSprite->fillSprite(TFT_BLACK);
-    guiSprite->drawLine(0, 0, W - 1, H - 1, TFT_WHITE);
-    guiSprite->drawLine(W - 1, 0, 0, H - 1, TFT_WHITE);
-    pushDirtySprite(offsetX, offsetY);
-
-}
-
-// Direct hardware color fill test (bypassing the sprite pipeline)
-void DisplayManager::drawDirectColorFrame(uint16_t color) {
-    checkTFTWakeDelay();
-    // This is a direct write to the TFT to verify the bus can render a frame
-    if (!guiSprite) {
-        tft.fillScreen(color);
-
-        return;
-    }
-    // If sprite exists, we still perform a direct fill on the TFT to bypass sprite buffer
-    tft.fillScreen(color);
-
-}
 void DisplayManager::drawSyncStatus(const char* status) {
     if (!guiSprite) return;
     guiSprite->fillSprite(guiSprite->color565(0, 0, 100)); // Dark Navy
@@ -661,42 +613,6 @@ void DisplayManager::drawSyncStatus(const char* status) {
     guiSprite->setTextDatum(MC_DATUM);
     guiSprite->drawString(status, guiSprite->width() / 2, guiSprite->height() / 2);
     pushDirtySprite(offsetX, offsetY);
-}
-
-// Simple sprite test - tiny sprite to verify sprite path works
-void DisplayManager::drawActiveGUISimpleTest() {
-    if (!guiSprite) {
-
-        return;
-    }
-    
-
-    // Create a tiny sprite to test basic sprite functionality
-    TFT_eSprite* testSprite = new TFT_eSprite(&tft);
-    if (!testSprite) {
-
-        return;
-    }
-    
-    testSprite->setColorDepth(16);
-    if (!testSprite->createSprite(64, 32)) {
-
-        delete testSprite;
-        return;
-    }
-    
-
-    testSprite->fillSprite(TFT_BLUE);
-    testSprite->pushSprite(10, 10);
-
-    delay(500);
-    
-    // Now try yellow
-    testSprite->fillSprite(TFT_YELLOW);
-    testSprite->pushSprite(20, 20);
-
-    delete testSprite;
-
 }
 
 void DisplayManager::drawAddViewGUI(const char* currentInput, int cursorIdx, int activeField, bool hasDue, int y, int m, int d, int h, int min) {
@@ -810,7 +726,6 @@ void DisplayManager::drawEditViewGUI(const char* currentInput, int cursorIdx, in
     // Title input box — show only the last N chars so the cursor stays visible.
     drawInputBox(4, curY, W - 8, 12, currentInput, cursorIdx, activeField == 0);
     curY += 18;
-
 
     // Field 1: Has Due Date
     guiSprite->setTextColor(TFT_WHITE, TFT_BLACK);
@@ -1438,8 +1353,6 @@ void DisplayManager::drawAddEventGUI(const char* title, int cursorIdx, int hour,
 
     pushDirtySprite(offsetX, offsetY);
 }
-
-
 
 void DisplayManager::setTFTBrightness(uint8_t brightness) {
     if (brightness == 0) {
