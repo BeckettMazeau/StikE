@@ -15,20 +15,10 @@
 #include <ArduinoJson.h>
 
 
-// TEST_START: Systems Test
-#ifdef STike_SYSTEM_TEST
-#include "../tests/systems_test.h"
-#endif
-// TEST_END: Systems Test
 
 DisplayManager displayMgr;
 KeyboardManager keyboardMgr;
 
-// TEST_START: Systems Test
-#ifdef STike_SYSTEM_TEST
-SystemsTest systemsTest;
-#endif
-// TEST_END: Systems Test
 
 // Event queue for system events
 QueueHandle_t systemEventQueue = nullptr;
@@ -128,26 +118,7 @@ uint8_t tftBrightness = 255;
 uint16_t autoSleepMinutes = 5;
 uint32_t lastInputTime = 0;
 // Sleep-safe logging macros
-#define LOG_PRINT(...)                                                         \
-  do {                                                                         \
-    if (Serial)                                                                \
-      Serial.print(__VA_ARGS__);                                               \
-  } while (0)
-#define LOG_PRINTLN(...)                                                       \
-  do {                                                                         \
-    if (Serial)                                                                \
-      Serial.println(__VA_ARGS__);                                             \
-  } while (0)
-#define LOG_PRINTF(...)                                                        \
-  do {                                                                         \
-    if (Serial) {                                                              \
-      char _buf[256];                                                          \
-      snprintf(_buf, sizeof(_buf), __VA_ARGS__);                               \
-      Serial.print(_buf);                                                      \
-    }                                                                          \
-  } while (0)
 
-void IRAM_ATTR wakeButtonISR() { wakeRequested = true; }
 
 // Send system event to queue
 void sendSystemEvent(SystemEventType type, int param = 0) {
@@ -161,12 +132,6 @@ void sendSystemEvent(SystemEventType type, int param = 0) {
 void keyboardTask(void* parameter) {
     for (;;) {
         // --- CONCURRENCY FIX START ---
-        #ifdef STike_SYSTEM_TEST
-        if (SystemsTest::isTestMode()) {
-            vTaskDelay(pdMS_TO_TICKS(100)); // Yield Core 0 while Test Mode handles I2C
-            continue;
-        }
-        #endif
         // --- CONCURRENCY FIX END ---
 
         if (keyboardMgr.isAvailable()) {
@@ -250,8 +215,7 @@ void saveTasks() {
     prefs.putString("gcalURL", gcalURL);
     
     prefs.end();
-    LOG_PRINTLN("[NVS] Tasks and settings saved as blob");
-}
+    }
 
 // Forward declaration - defined later in this file
 void removeLinkedEvent(uint32_t taskId);
@@ -291,9 +255,7 @@ void loadTasks() {
     if (len > 0) {
         if (len > sizeof(tasks)) len = sizeof(tasks);
         prefs.getBytes("tasks_blob", tasks, len);
-        LOG_PRINTF("[NVS] Loaded %u tasks from blob (%d bytes)\n", taskCount, (int)len);
-    } else {
-        LOG_PRINTLN("[NVS] No tasks blob found, checking legacy individual keys...");
+        } else {
         // Legacy fallback for individual keys if someone is upgrading
         for (uint32_t i = 0; i < taskCount; ++i) {
             char key[16];
@@ -364,7 +326,6 @@ void removeLinkedEvent(uint32_t taskId) {
     return;
   for (uint32_t i = 0; i < calendarEventCount; i++) {
     if (calendarEvents[i].linkedTaskId == taskId) {
-      LOG_PRINTF("[Sync] Removing linked event: %s\n", calendarEvents[i].title);
       for (uint32_t j = i; j < calendarEventCount - 1; j++) {
         calendarEvents[j] = calendarEvents[j + 1];
       }
@@ -384,15 +345,11 @@ void syncTaskToCalendar(const TaskItem &task) {
           task.title, task.dueYear, task.dueMonth, task.dueDay, task.dueHour,
           task.dueMinute, 60, "Linked Task", "StikE", task.timestamp);
       calendarEventCount++;
-      LOG_PRINTF("[Sync] Created calendar event for task: %s at %02d:%02d\n",
-                 task.title, task.dueHour, task.dueMinute);
     }
   }
 }
 
 void enterSleepMode() {
-  LOG_PRINTLN("[State] Entering SLEEP mode");
-
   displayMgr.turnOffTFT();
   displayMgr.prepareEpaperViews(tasks, taskCount, calendarEvents,
                                 calendarEventCount, calYear, calMonth, calDay,
@@ -407,8 +364,6 @@ void enterSleepMode() {
 }
 
 void wakeToActive() {
-    LOG_PRINTLN("[State] Waking to ACTIVE mode");
-
     displayMgr.turnOnTFT();
     displayMgr.setTFTBrightness(tftBrightness);
     displayMgr.drawEpaperLogo(); // Show logo on ePaper while active
@@ -452,12 +407,10 @@ void parseNaturalLanguageTime(const char* title, int& hour) {
 static void handleUIListEvent(const SystemEvent &event) {
   switch (event.type) {
   case SystemEventType::EVENT_CANCEL:
-    LOG_PRINTLN("[Input] ESC in LIST - entering sleep");
     enterSleepMode();
     return;
 
   case SystemEventType::SLEEP_REQ:
-    LOG_PRINTLN("[Input] Fn+ESC in LIST - entering sleep");
     enterSleepMode();
     return;
 
@@ -496,8 +449,6 @@ static void handleUIListEvent(const SystemEvent &event) {
         tasks[realIdx].completedMonth = calMonth;
         tasks[realIdx].completedDay = calDay;
       }
-      LOG_PRINTF("[Input] Toggled task (filtered %d) real %d\n",
-                 selectedTaskIndex, realIdx);
       updateFilteredTasks();
       if (selectedTaskIndex >= filteredTaskCount && filteredTaskCount > 0) {
         selectedTaskIndex = filteredTaskCount - 1;
@@ -517,10 +468,8 @@ static void handleUIListEvent(const SystemEvent &event) {
     if (event.param == 'n' || event.param == 'N') {
       if (taskCount >= MAX_TASKS) {
         // List is full — signal the UI to show feedback on next draw
-        LOG_PRINTLN("[Input] N - task list full, cannot add");
         uiDirty = true; // Redraw so footer shows the "LIST FULL" status
       } else {
-        LOG_PRINTLN("[Input] N - opening Add Task view");
         inputBuffer[0] = '\0';
         inputBufferLen = 0;
         inputCursorPos = 0;
@@ -538,10 +487,8 @@ static void handleUIListEvent(const SystemEvent &event) {
     // 'q'/'Q' opens Quick Add view
     else if (event.param == 'q' || event.param == 'Q') {
       if (taskCount >= MAX_TASKS) {
-        LOG_PRINTLN("[Input] Q - task list full");
         uiDirty = true;
       } else {
-        LOG_PRINTLN("[Input] Q - opening Quick Add view");
         inputBuffer[0] = '\0';
         inputBufferLen = 0;
         inputCursorPos = 0;
@@ -554,8 +501,6 @@ static void handleUIListEvent(const SystemEvent &event) {
       if (selectedTaskIndex >= 0 &&
           selectedTaskIndex < static_cast<int>(filteredTaskCount)) {
         int realIdx = filteredTaskIndices[selectedTaskIndex];
-        LOG_PRINTF("[Input] E - opening Edit Task view for index %d\n",
-                   realIdx);
         snprintf(inputBuffer, INPUT_BUFFER_SIZE, "%.*s",
                  (int)sizeof(tasks[realIdx].title), tasks[realIdx].title);
         inputBufferLen = strlen(inputBuffer);
@@ -587,14 +532,12 @@ static void handleUIListEvent(const SystemEvent &event) {
     }
     // 0x9A (Fn+A) opens Alignment Mode
     else if (event.param == 0x9A) {
-      LOG_PRINTLN("[Input] Fn+A - entering alignment mode");
       currentState = SystemState::STATE_UI_ALIGN;
       displayMgr.clearFullHardwareScreen();
       uiDirty = true;
     }
     // 0xA8 (Fn+C) opens Calendar
     else if (event.param == 0xA8) {
-      LOG_PRINTLN("[Input] Fn+C - entering calendar mode");
       currentState = SystemState::STATE_UI_CALENDAR;
       uiDirty = true;
     }
@@ -606,7 +549,6 @@ static void handleUIListEvent(const SystemEvent &event) {
     }
     // 0x96 (Fn+P) opens Pomodoro
     else if (event.param == 0x96) {
-      LOG_PRINTLN("[Input] Fn+P - entering Pomodoro mode");
       currentState = SystemState::STATE_UI_POMODORO;
       uiDirty = true;
     }
@@ -616,7 +558,6 @@ static void handleUIListEvent(const SystemEvent &event) {
     if (selectedTaskIndex >= 0 &&
         selectedTaskIndex < static_cast<int>(filteredTaskCount)) {
       int realIdx = filteredTaskIndices[selectedTaskIndex];
-      LOG_PRINTF("[Input] Backspace - deleting task %d\n", realIdx);
       removeLinkedEvent(tasks[realIdx].timestamp);
       for (uint32_t i = realIdx; i < taskCount - 1; ++i) {
         tasks[i] = tasks[i + 1];
@@ -770,7 +711,6 @@ static bool handleSharedTaskEditInput(const SystemEvent &event) {
 
 static void handleUIAddTaskEvent(const SystemEvent &event) {
   if (event.type == SystemEventType::EVENT_CANCEL) {
-    LOG_PRINTLN("[Input] ESC in ADD - canceling");
     inputBuffer[0] = '\0';
     inputBufferLen = 0;
     currentState = SystemState::STATE_UI_LIST;
@@ -791,7 +731,6 @@ static void handleUIAddTaskEvent(const SystemEvent &event) {
                    taskEditMonth, taskEditDay, finalHour, taskEditMinute);
       syncTaskToCalendar(tasks[taskCount]);
       taskCount++;
-      LOG_PRINTF("[Input] Added task: %s (H:%d)\n", inputBuffer, finalHour);
       updateFilteredTasks();
       if (selectedTaskIndex < 0 && filteredTaskCount > 0) {
         selectedTaskIndex = 0;
@@ -808,7 +747,6 @@ static void handleUIAddTaskEvent(const SystemEvent &event) {
 
 static void handleUIEditTaskEvent(const SystemEvent &event) {
   if (event.type == SystemEventType::EVENT_CANCEL) {
-    LOG_PRINTLN("[Input] ESC in EDIT - canceling");
     inputBuffer[0] = '\0';
     inputBufferLen = 0;
     currentState = SystemState::STATE_UI_LIST;
@@ -831,7 +769,6 @@ static void handleUIEditTaskEvent(const SystemEvent &event) {
       tasks[realIdx].dueHour = taskEditHour;
       tasks[realIdx].dueMinute = taskEditMinute;
       syncTaskToCalendar(tasks[realIdx]);
-      LOG_PRINTF("[Input] Edited task %d: %s\n", realIdx, inputBuffer);
       saveTasks();
     }
     inputBuffer[0] = '\0';
@@ -845,7 +782,6 @@ static void handleUIEditTaskEvent(const SystemEvent &event) {
 static void handleUIAlignEvent(const SystemEvent &event) {
   switch (event.type) {
   case SystemEventType::EVENT_CANCEL:
-    LOG_PRINTLN("[Input] ESC in ALIGN - returning to list");
     currentState = SystemState::STATE_UI_LIST;
     displayMgr.clearFullHardwareScreen();
     uiDirty = true;
@@ -893,7 +829,6 @@ static void handleUIAlignEvent(const SystemEvent &event) {
 static void handleUICalendarEvent(const SystemEvent& event) {
     switch (event.type) {
         case SystemEventType::EVENT_CANCEL:
-            LOG_PRINTLN("[Input] ESC in CALENDAR - returning to list");
             currentState = SystemState::STATE_UI_LIST;
             uiDirty = true;
             break;
@@ -1194,35 +1129,28 @@ void syncGoogleCalendar() {
   static CalendarEvent tempEvents[MAX_CALENDAR_EVENTS];
 
   if (strlen(wifiSSID) == 0) {
-    LOG_PRINTLN("[Sync] Missing WiFi SSID. Aborting.");
     return;
   }
 
   displayMgr.turnOnTFT();
   displayMgr.drawSyncStatus("Connecting WiFi...");
 
-  LOG_PRINTF("[Sync] Connecting to WiFi: %s\n", wifiSSID);
   WiFi.mode(WIFI_STA);
   WiFi.begin(wifiSSID, wifiPassword);
 
   int attempts = 0;
   while (WiFi.status() != WL_CONNECTED && attempts < 20) {
     delay(500);
-    Serial.print(".");
+
     attempts++;
   }
-  Serial.println();
 
   if (WiFi.status() != WL_CONNECTED) {
-    LOG_PRINTLN("[Sync] Failed to connect to WiFi.");
     WiFi.mode(WIFI_OFF);
     return;
   }
-  LOG_PRINTLN("[Sync] WiFi Connected!");
-
   // --- NTP Time Sync ---
   displayMgr.drawSyncStatus("Syncing Time...");
-  LOG_PRINTLN("[Sync] Syncing time via NTP...");
   configTime(0, 0, "pool.ntp.org", "time.nist.gov");
   
   struct tm timeinfo;
@@ -1236,14 +1164,10 @@ void syncGoogleCalendar() {
       calYear = timeinfo.tm_year + 1900;
       calMonth = timeinfo.tm_mon + 1;
       calDay = timeinfo.tm_mday;
-      LOG_PRINTF("[Sync] Time synced: %04d-%02d-%02d %02d:%02d\n", calYear, calMonth, calDay, timeinfo.tm_hour, timeinfo.tm_min);
-  } else {
-      LOG_PRINTLN("[Sync] NTP sync timed out.");
-  }
+      }
 
   if (strlen(gcalURL) == 0) {
     displayMgr.drawSyncStatus("Time Updated!");
-    LOG_PRINTLN("[Sync] No GCal URL provided, skipping calendar sync.");
     delay(1000); // Show "Time Updated!" for a second
     WiFi.mode(WIFI_OFF);
     uiDirty = true;
@@ -1251,8 +1175,6 @@ void syncGoogleCalendar() {
   }
 
   displayMgr.drawSyncStatus("Fetching Cal...");
-  LOG_PRINTF("[Sync] Fetching Calendar from: %s\n", gcalURL);
-  
   {
     HTTPClient http;
     http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
@@ -1262,14 +1184,10 @@ void syncGoogleCalendar() {
     if (httpCode > 0) {
       if (httpCode == HTTP_CODE_OK) {
         String payload = http.getString();
-        LOG_PRINTLN("[Sync] Received JSON payload. Parsing...");
-
         DynamicJsonDocument doc(8192);
         DeserializationError error = deserializeJson(doc, payload);
 
         if (error) {
-          LOG_PRINTF("[Sync] deserializeJson() failed: %s\n", error.c_str());
-        } else {
           uint32_t newCount = 0;
           // tempEvents is now static at function scope
 
@@ -1301,15 +1219,8 @@ void syncGoogleCalendar() {
             calendarEvents[i] = tempEvents[i];
           }
 
-          LOG_PRINTF("[Sync] Calendar updated. Total events: %d\n",
-                     calendarEventCount);
         }
-      } else {
-        LOG_PRINTF("[Sync] HTTP GET failed, code: %d\n", httpCode);
       }
-    } else {
-      LOG_PRINTF("[Sync] HTTP Connection failed, error: %s\n",
-                 http.errorToString(httpCode).c_str());
     }
 
     http.end();
@@ -1318,7 +1229,6 @@ void syncGoogleCalendar() {
   displayMgr.drawSyncStatus("Sync Complete!");
   delay(1000); 
   WiFi.mode(WIFI_OFF);
-  LOG_PRINTLN("[Sync] Complete. WiFi powered off.");
   uiDirty = true;
 }
 
@@ -1476,7 +1386,6 @@ static void handleUISettingsEvent(const SystemEvent& event) {
 static void handleUIQuickAddEvent(const SystemEvent& event) {
     switch (event.type) {
         case SystemEventType::EVENT_CANCEL:
-            LOG_PRINTLN("[Input] ESC in QUICK ADD - canceling");
             inputBuffer[0] = '\0';
             inputBufferLen = 0;
             currentState = SystemState::STATE_UI_LIST;
@@ -1541,7 +1450,6 @@ static void handleUIQuickAddEvent(const SystemEvent& event) {
                                             calMonth, calDay, finalHour, 0);
                 syncTaskToCalendar(tasks[taskCount]);
                 taskCount++;
-                LOG_PRINTF("[QuickAdd] Added task: %s (H:%d)\n", inputBuffer, finalHour);
                 updateFilteredTasks();
                 saveTasks();
             }
@@ -1563,7 +1471,6 @@ static void handleUIPomodoroEvent(const SystemEvent& event) {
         displayMgr.turnOnTFT();
         displayMgr.setTFTBrightness(tftBrightness);
         uiDirty = true;
-        LOG_PRINTLN("[Pomodoro] Woke and paused by key press");
         return; 
     }
 
@@ -1644,9 +1551,7 @@ static void handleUIPomodoroEvent(const SystemEvent& event) {
 }
 
 void handleSleepState() {
-  LOG_PRINTF("[Sleep] Cycle %u, view %d\n", sleepCycleCount, currentEpaperView);
-
-#ifndef DIAG_UI_ONLY
+  #ifndef DIAG_UI_ONLY
   uint32_t totalViews = displayMgr.getEpaperViewCount();
   if (totalViews > 0) {
     displayMgr.updateEpaperPartial(currentEpaperView);
@@ -1669,8 +1574,6 @@ void handleSleepState() {
 
   // DO NOT power down VDDSDIO during light sleep! It crashes the flash memory
   // causing a reboot (which explains the random color flashing on wake).
-  // TODO: Potential Dead Code
-  // esp_sleep_pd_config(ESP_PD_DOMAIN_VDDSDIO, ESP_PD_OPTION_OFF);
 
   // Enter light sleep
   esp_light_sleep_start();
@@ -1678,11 +1581,9 @@ void handleSleepState() {
 
 
   // Re-attach active-mode rising edge interrupt just to be safe
-  attachInterrupt(Pins::WAKE_BTN, wakeButtonISR, RISING);
 
   // Check wake reason immediately after waking
   if (wakeRequested) {
-    LOG_PRINTLN("[Sleep] Woke from GPIO interrupt");
     wakeToActive();
   }
 }
@@ -1694,32 +1595,23 @@ void setup() {
 
   // Give serial a moment to initialize before beginning
   delay(100);
-  Serial.begin(115200);
+
   // Wait for Serial to connect (up to 3 seconds) for easier debugging
   while (!Serial && millis() < 1000)
     ;
 
   delay(100);
-  LOG_PRINTLN("\n=== StikE Firmware Starting ===");
-
-  LOG_PRINTLN("[Setup] Calling displayMgr.initBusesAndDisplays()...");
   displayMgr.initBusesAndDisplays();
-  LOG_PRINTLN("[Setup] displayMgr.initBusesAndDisplays() returned");
   delay(100); // Stabilization delay
 
-  LOG_PRINTLN("[Setup] Calling keyboardMgr.init()...");
   keyboardMgr.init();
-  LOG_PRINTLN("[Setup] keyboardMgr.init() returned");
   delay(100); // Stabilization delay
 
   pinMode(Pins::WAKE_BTN, INPUT);
-  attachInterrupt(Pins::WAKE_BTN, wakeButtonISR, RISING);
 
   // Create system event queue
   systemEventQueue = xQueueCreate(10, sizeof(SystemEvent));
-  if (systemEventQueue == nullptr) {
-    LOG_PRINTLN("[ERROR] Failed to create system event queue");
-  }
+  if (systemEventQueue == nullptr) {}
 
   // Create keyboard task on core 0
   BaseType_t result = xTaskCreatePinnedToCore(keyboardTask, "KeyboardTask",
@@ -1730,35 +1622,16 @@ void setup() {
                                               0 // Core 0
   );
 
-  if (result != pdPASS) {
-    LOG_PRINTLN("[ERROR] Failed to create keyboard task");
-  }
+  if (result != pdPASS) {}
 
   // Smoke-test drawing path to aid debugging UI rendering
-#ifdef STike_SYSTEM_TEST
-  Serial.println("[SYS_TEST] Triggering UI smoke test (MAGENTA)");
-  displayMgr.drawSmokeTest();
-#endif
 
 // Also run a full-red screen diagnostic to ensure the end-to-end write path
 // remains healthy
-#ifdef STike_SYSTEM_TEST
-  Serial.println("[SYS_TEST] Triggering full-red screen diagnostic");
-  displayMgr.drawTestFullRed();
-#endif
 
 // Direct diagnostic path: drawMagenta directly bypassing the sprite to confirm TFT path
-#ifdef STike_SYSTEM_TEST
-  Serial.println(
-      "[SYS_TEST] Triggering direct color frame (MAGENTA) bypass sprite");
-  displayMgr.drawDirectColorFrame(TFT_MAGENTA);
-#endif
 
 // Simple sprite test - tiny sprite to verify sprite path works
-#ifdef STike_SYSTEM_TEST
-  Serial.println("[SYS_TEST] Triggering simple sprite test (64x32)");
-  displayMgr.drawActiveGUISimpleTest();
-#endif
 
 // Tiny extra test to verify full-screen write path (red screen)
 
@@ -1776,14 +1649,8 @@ void setup() {
 loadTasks();
     if (taskCount == 0) {
         addDemoTasks();
-        LOG_PRINTLN("[Setup] No saved tasks found, using demo tasks");
     }
-    LOG_PRINTF("[Setup] Loaded %u tasks\n", taskCount);
-
     addDemoEvents();
-    LOG_PRINTLN("[Setup] Demo events initialized");
-
-    LOG_PRINTLN("[Setup] Entering UI_LIST state");
     currentState = SystemState::STATE_UI_LIST;
     updateFilteredTasks();
     selectedTaskIndex = (filteredTaskCount > 0) ? 0 : -1;
@@ -1791,23 +1658,9 @@ loadTasks();
     inputBufferLen = 0;
     uiDirty = true;
     
-    // TEST_START: Systems Test initialization
-    #ifdef STike_SYSTEM_TEST
-    systemsTest.init();
-    #endif
-    // TEST_END: Systems Test
 }
 
 void loop() {
-    // TEST_START: Systems Test
-    #ifdef STike_SYSTEM_TEST
-    if (SystemsTest::isTestMode()) {
-        systemsTest.update();
-        delay(50);
-        return;
-    }
-    #endif
-    // TEST_END: Systems Test
     
 
     if (currentState == SystemState::STATE_SLEEP) {
