@@ -21,7 +21,7 @@ The system alternates between ACTIVE mode (interactive TFT) and SLEEP mode (ePap
 | CS/SS  | 7    | Chip select |
 | DC     | 16   | Data/Command pin |
 | RST    | 15   | Reset pin |
-| BUSY   | 4    | Busy status (dedicated pin) |
+| BUSY   | 17   | Busy status (dedicated pin) |
 
 ### TFT Display (SPI - HSPI/SPI3 hardware bus)
 | Signal | GPIO | Notes |
@@ -296,7 +296,7 @@ build_flags =
 	-D TFT_DC=9
 	-D TFT_RST=13
 	-D TFT_BL=42
-	; GxEPD2 (FSPI hardware) - SCK=5, MOSI=6, CS=7, DC=16, RST=15, BUSY=4
+	; GxEPD2 (FSPI hardware) - SCK=5, MOSI=6, CS=7, DC=16, RST=15, BUSY=17
 	-D GxEPD2_DISPLAY_CLASS=Generic_EPD
 	-D GxEPD2_DRIVER_CLASS=GxEPD2_213_B74
 ```
@@ -1021,7 +1021,7 @@ if (key) Serial.printf("Key: %c\n", key);
 |-------|-----|
 | Is SPI initialized? | Call `epd.init()` before each update |
 | Is powerOff() called? | Use `epd.powerOff()` not `hibernate()` |
-| Is BUSY pin correct? | Verify GPIO 4 in `pins.h` |
+| Is BUSY pin correct? | Verify GPIO 17 in `pins.h` |
 
 **Debug**: Check ePaper connection:
 ```cpp
