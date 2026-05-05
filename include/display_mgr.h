@@ -45,17 +45,7 @@ public:
     void drawPomodoroGUI(int workMins, int breakMins, bool isRunning, bool isWorkMode, uint32_t secondsRemaining, int activeField, int selectedTaskId, const TaskItem tasks[], uint32_t taskCount);
     void drawEpaperPomodoro(int minutes, int seconds, bool isWorkMode, const char* taskTitle, bool fullRefresh = false);
     void clearFullHardwareScreen();
-    // Smoke test drawing path for diagnostics
-    void drawSmokeTest();
-    // Full-screen solid color diagnostic test to verify end-to-end render path
-    void drawTestFullRed();
-    // Additional diagnostic overlay to test end-to-end render path
-    void drawTestOverlay();
-    // Direct color frame test (bypass sprite) to verify TFT path
-    void drawDirectColorFrame(uint16_t color);
     void drawSyncStatus(const char* status);
-    // Simple sprite test - tiny sprite to verify sprite path works
-    void drawActiveGUISimpleTest();
     uint32_t getEpaperViewCount() const { return epaperViewCount; }
 
     TFT_eSPI& getTFT() { return tft; }

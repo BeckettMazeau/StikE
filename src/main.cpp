@@ -14,11 +14,8 @@
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 
-
-
 DisplayManager displayMgr;
 KeyboardManager keyboardMgr;
-
 
 // Event queue for system events
 QueueHandle_t systemEventQueue = nullptr;
@@ -119,7 +116,6 @@ uint16_t autoSleepMinutes = 5;
 uint32_t lastInputTime = 0;
 // Sleep-safe logging macros
 
-
 // Send system event to queue
 void sendSystemEvent(SystemEventType type, int param = 0) {
   if (systemEventQueue) {
@@ -131,8 +127,6 @@ void sendSystemEvent(SystemEventType type, int param = 0) {
 // Keyboard reader task - runs on core 0
 void keyboardTask(void* parameter) {
     for (;;) {
-        // --- CONCURRENCY FIX START ---
-        // --- CONCURRENCY FIX END ---
 
         if (keyboardMgr.isAvailable()) {
             char key = keyboardMgr.getKeyPress();
@@ -467,7 +461,6 @@ static void handleUIListEvent(const SystemEvent &event) {
     // 'n'/'N' opens Add Task view (blocked when list is full)
     if (event.param == 'n' || event.param == 'N') {
       if (taskCount >= MAX_TASKS) {
-        // List is full — signal the UI to show feedback on next draw
         uiDirty = true; // Redraw so footer shows the "LIST FULL" status
       } else {
         inputBuffer[0] = '\0';
@@ -644,7 +637,6 @@ static bool handleSharedTaskEditInput(const SystemEvent &event) {
         uiDirty = true;
       }
     } else if (taskEditField == 2) {
-      // (Optional: handle field navigation or just leave as is)
     }
     break;
 
@@ -1578,8 +1570,6 @@ void handleSleepState() {
   // Enter light sleep
   esp_light_sleep_start();
 
-
-
   // Re-attach active-mode rising edge interrupt just to be safe
 
   // Check wake reason immediately after waking
@@ -1595,10 +1585,6 @@ void setup() {
 
   // Give serial a moment to initialize before beginning
   delay(100);
-
-  // Wait for Serial to connect (up to 3 seconds) for easier debugging
-  while (!Serial && millis() < 1000)
-    ;
 
   delay(100);
   displayMgr.initBusesAndDisplays();
@@ -1623,18 +1609,6 @@ void setup() {
   );
 
   if (result != pdPASS) {}
-
-  // Smoke-test drawing path to aid debugging UI rendering
-
-// Also run a full-red screen diagnostic to ensure the end-to-end write path
-// remains healthy
-
-// Direct diagnostic path: drawMagenta directly bypassing the sprite to confirm TFT path
-
-// Simple sprite test - tiny sprite to verify sprite path works
-
-// Tiny extra test to verify full-screen write path (red screen)
-
 
     // Load tasks from NVS
 
@@ -1662,7 +1636,6 @@ loadTasks();
 
 void loop() {
     
-
     if (currentState == SystemState::STATE_SLEEP) {
         handleSleepState();
         return;
@@ -1673,7 +1646,6 @@ void loop() {
         enterSleepMode();
         return;
     }
-
 
     // Drain all pending events, dispatching by current UI state
     SystemEvent event;
@@ -1729,8 +1701,6 @@ void loop() {
             return;
         }
     }
-
-
 
     // Only redraw when state has actually changed
     if (uiDirty) {
