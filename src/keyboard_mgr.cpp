@@ -10,7 +10,7 @@ void KeyboardManager::init() {
     Wire.begin(Pins::KEY_SDA, Pins::KEY_SCL);
     Wire.setClock(100000);
     initialized = true;
-    Serial.printf("[KeyboardMgr] I2C initialized on SDA=%d, SCL=%d\n", Pins::KEY_SDA, Pins::KEY_SCL);
+
 }
 
 bool KeyboardManager::isAvailable() {
@@ -49,17 +49,16 @@ char KeyboardManager::getKeyPress() {
 }
 
 void KeyboardManager::scanBus() {
-    Serial.println("[KeyboardMgr] Starting I2C bus scan...");
+
     int nDevices = 0;
     for (byte address = 1; address < 127; address++) {
         Wire.beginTransmission(address);
         byte error = Wire.endTransmission();
 
         if (error == 0) {
-            Serial.printf("[KeyboardMgr] Device found at address 0x%02X\n", address);
+
             nDevices++;
         }
     }
-    if (nDevices == 0) Serial.println("[KeyboardMgr] No I2C devices found.");
-    else Serial.printf("[KeyboardMgr] Scan complete. Found %d device(s).\n", nDevices);
+
 }

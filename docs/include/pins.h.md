@@ -19,7 +19,7 @@ Uses the global SPI object (FSPI, SPI2 on S3).
 - `EP_CS = 7`
 - `EP_DC = 16`
 - `EP_RST = 15`
-- `EP_BUSY = 4`
+- `EP_BUSY = 17`
 
 **TFT (ST7735S) Pins:**
 Uses Hardware VSPI (via `TFT_eSPI` user setup).

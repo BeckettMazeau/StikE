@@ -14,7 +14,7 @@ constexpr uint8_t EP_MOSI = 6;
 constexpr uint8_t EP_CS   = 7;
 constexpr uint8_t EP_DC   = 16;
 constexpr uint8_t EP_RST  = 15;
-constexpr uint8_t EP_BUSY = 4;
+constexpr uint8_t EP_BUSY = 17;
 
 // TFT (ST7735S) - Hardware VSPI (via TFT_eSPI/User_Setup.h)
 // SCK=12, MOSI=11, CS=10, DC=9, RST=13
