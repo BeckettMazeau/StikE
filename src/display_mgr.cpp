@@ -42,7 +42,7 @@ void DisplayManager::initBusesAndDisplays() {
     // so we must finish all ePaper SPI transactions first.
 
     // 1. Initialize ePaper SPI bus and driver
-    Serial.println("[DisplayMgr] Init ePaper SPI...");
+
     SPI.begin(Pins::EP_SCK, -1, Pins::EP_MOSI, Pins::EP_CS);
     delay(100);
     epd.init(115200);
@@ -54,18 +54,18 @@ void DisplayManager::initBusesAndDisplays() {
     delay(100);
 
     // 2. Draw initial ePaper logo while SPI bus is still pristine
-    Serial.println("[DisplayMgr] Drawing ePaper logo...");
+
     drawEpaperLogo();
 
     // 3. Hibernate ePaper — done with FSPI until sleep mode
-    Serial.println("[DisplayMgr] Hibernating ePaper...");
+
     epd.hibernate();
     delay(50); // Reduced settle time
 
     // === TFT: Now safe to initialize HSPI for the TFT ===
 
     // 4. Initialize TFT and backlight
-    Serial.println("[DisplayMgr] Init TFT...");
+
     pinMode(Pins::LCD_BL, OUTPUT);
     analogWrite(Pins::LCD_BL, 255);
     
@@ -79,31 +79,31 @@ void DisplayManager::initBusesAndDisplays() {
     drawBootLogo();
 
     // 6. Initialize LittleFS and load Smooth Font (deferred)
-    Serial.println("[DisplayMgr] Init LittleFS...");
+
     if (!LittleFS.begin()) {
-        Serial.println("[DisplayMgr] ERROR: LittleFS mount failed, formatting...");
+
         LittleFS.format();
         if (LittleFS.begin()) {
-            Serial.println("[DisplayMgr] LittleFS formatted and mounted");
+
         } else {
-            Serial.println("[DisplayMgr] CRITICAL: LittleFS format failed");
+
         }
     } else {
         // We look for a font file named "Outfit-Medium-12.vlw" or similar
         // If not found, we'll fall back to default, but the logic is enabled.
         if (LittleFS.exists("/Outfit-Medium-12.vlw")) {
-            Serial.println("[DisplayMgr] Loading Outfit-Medium-12 font...");
+
             tft.loadFont("Outfit-Medium-12", LittleFS);
         } else if (LittleFS.exists("/Inter-Regular-12.vlw")) {
-            Serial.println("[DisplayMgr] Loading Inter-Regular-12 font...");
+
             tft.loadFont("Inter-Regular-12", LittleFS);
         } else {
-            Serial.println("[DisplayMgr] No VLW font found on LittleFS, using default");
+
         }
     }
 
     // 7. Create GUI sprite
-    Serial.println("[DisplayMgr] Creating GUI sprite...");
+
     guiSprite = new TFT_eSprite(&tft);
     if (guiSprite) {
         guiSprite->setColorDepth(16);
@@ -116,10 +116,8 @@ void DisplayManager::initBusesAndDisplays() {
             } else {
                 guiSprite->setTextFont(1);
             }
-            Serial.printf("[DisplayMgr] Sprite %dx%d allocated\n",
-                          guiSprite->width(), guiSprite->height());
         } else {
-            Serial.println("[DisplayMgr] ERROR: Failed to allocate GUI sprite");
+
             delete guiSprite;
             guiSprite = nullptr;
         }
@@ -303,7 +301,7 @@ void DisplayManager::prepareEpaperViews(const TaskItem tasks[], uint32_t taskCou
         epaperViewCount++;
     }
 
-    Serial.printf("[DisplayMgr] Prepared %u ePaper screens with %u items total\n", epaperViewCount, eligibleCount);
+
 }
 
 void DisplayManager::drawEpaperView(int index) {
@@ -486,7 +484,7 @@ bool DisplayManager::isAnimating() const {
 
 void DisplayManager::drawActiveGUI(const TaskItem tasks[], const int filteredIndices[], uint32_t filteredCount, int selectedIndex, int topIndex, int viewMode) {
     if (!guiSprite) {
-        Serial.println("[SYS_TEST] drawActiveGUI: guiSprite is null, bailing");
+
         return;
     }
 
@@ -607,7 +605,7 @@ void DisplayManager::drawActiveGUI(const TaskItem tasks[], const int filteredInd
     }
 
     pushDirtySprite(offsetX, offsetY);
-    Serial.printf("[GUI] drawActiveGUI: top=%d sel=%d count=%u\n", topIndex, selectedIndex, filteredCount);
+
 }
 
 void DisplayManager::drawSmokeTest() {
@@ -617,7 +615,7 @@ void DisplayManager::drawSmokeTest() {
     // Simple, bright smoke test to verify draw path end-to-end
     guiSprite->fillSprite(TFT_MAGENTA);
     pushDirtySprite(offsetX, offsetY);
-    Serial.println("[SYS_TEST] Smoke test drawn MAGENTA");
+
 }
 
 void DisplayManager::drawTestFullRed() {
@@ -626,7 +624,7 @@ void DisplayManager::drawTestFullRed() {
     }
     guiSprite->fillSprite(TFT_RED);
     pushDirtySprite(offsetX, offsetY);
-    Serial.println("[SYS_TEST] Full-screen RED test drawn");
+
 }
 
 void DisplayManager::drawTestOverlay() {
@@ -640,7 +638,7 @@ void DisplayManager::drawTestOverlay() {
     guiSprite->drawLine(0, 0, W - 1, H - 1, TFT_WHITE);
     guiSprite->drawLine(W - 1, 0, 0, H - 1, TFT_WHITE);
     pushDirtySprite(offsetX, offsetY);
-    Serial.println("[SYS_TEST] Overlay cross drawn");
+
 }
 
 // Direct hardware color fill test (bypassing the sprite pipeline)
@@ -649,12 +647,12 @@ void DisplayManager::drawDirectColorFrame(uint16_t color) {
     // This is a direct write to the TFT to verify the bus can render a frame
     if (!guiSprite) {
         tft.fillScreen(color);
-        Serial.printf("[SYS_TEST] Direct color frame drawn: 0x%04X\n", color);
+
         return;
     }
     // If sprite exists, we still perform a direct fill on the TFT to bypass sprite buffer
     tft.fillScreen(color);
-    Serial.printf("[SYS_TEST] Direct color frame drawn (sprite present) 0x%04X\n", color);
+
 }
 void DisplayManager::drawSyncStatus(const char* status) {
     if (!guiSprite) return;
@@ -668,40 +666,37 @@ void DisplayManager::drawSyncStatus(const char* status) {
 // Simple sprite test - tiny sprite to verify sprite path works
 void DisplayManager::drawActiveGUISimpleTest() {
     if (!guiSprite) {
-        Serial.println("[SYS_TEST] Simple test: guiSprite is null, cannot test");
+
         return;
     }
     
-    Serial.println("[SYS_TEST] Simple sprite test: creating 64x32 sprite");
-    
+
     // Create a tiny sprite to test basic sprite functionality
     TFT_eSprite* testSprite = new TFT_eSprite(&tft);
     if (!testSprite) {
-        Serial.println("[SYS_TEST] Simple test: failed to create test sprite");
+
         return;
     }
     
     testSprite->setColorDepth(16);
     if (!testSprite->createSprite(64, 32)) {
-        Serial.println("[SYS_TEST] Simple test: failed to allocate 64x32 sprite");
+
         delete testSprite;
         return;
     }
     
-    Serial.println("[SYS_TEST] Simple test: 64x32 sprite allocated, drawing blue");
+
     testSprite->fillSprite(TFT_BLUE);
     testSprite->pushSprite(10, 10);
-    Serial.println("[SYS_TEST] Simple test: pushed blue rect at 10,10");
-    
+
     delay(500);
     
     // Now try yellow
     testSprite->fillSprite(TFT_YELLOW);
     testSprite->pushSprite(20, 20);
-    Serial.println("[SYS_TEST] Simple test: pushed yellow rect at 20,20");
-    
+
     delete testSprite;
-    Serial.println("[SYS_TEST] Simple sprite test complete");
+
 }
 
 void DisplayManager::drawAddViewGUI(const char* currentInput, int cursorIdx, int activeField, bool hasDue, int y, int m, int d, int h, int min) {
@@ -1209,7 +1204,7 @@ void DisplayManager::drawEventDetailGUI(const CalendarEvent& event, int scrollOf
     const uint16_t headerStart = guiSprite->color565(0, 100, 0);
     const uint16_t headerEnd   = guiSprite->color565(0, 40, 0);
 
-    // textSize=1: glyph width = 6px. Max chars fitting in W-8 px.
+    // text size 1: glyph width is 6px. Max chars fitting in W-8 px.
     const int maxChars = (W - 12) / 6;
 
     guiSprite->fillSprite(TFT_BLACK);
