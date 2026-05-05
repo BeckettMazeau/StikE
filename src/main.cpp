@@ -3,7 +3,6 @@
 #include <WiFi.h>
 #include <esp_log.h>
 #include <Preferences.h>
-#include <WiFi.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 #include <freertos/task.h>
@@ -18,7 +17,7 @@
 
 // TEST_START: Systems Test
 #ifdef STike_SYSTEM_TEST
-#include "systems_test.h"
+#include "../tests/systems_test.h"
 #endif
 // TEST_END: Systems Test
 
@@ -1253,66 +1252,69 @@ void syncGoogleCalendar() {
 
   displayMgr.drawSyncStatus("Fetching Cal...");
   LOG_PRINTF("[Sync] Fetching Calendar from: %s\n", gcalURL);
-  HTTPClient http;
-  http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
-  http.begin(gcalURL);
-  int httpCode = http.GET();
+  
+  {
+    HTTPClient http;
+    http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+    http.begin(gcalURL);
+    int httpCode = http.GET();
 
-  if (httpCode > 0) {
-    if (httpCode == HTTP_CODE_OK) {
-      String payload = http.getString();
-      LOG_PRINTLN("[Sync] Received JSON payload. Parsing...");
+    if (httpCode > 0) {
+      if (httpCode == HTTP_CODE_OK) {
+        String payload = http.getString();
+        LOG_PRINTLN("[Sync] Received JSON payload. Parsing...");
 
-      DynamicJsonDocument doc(8192);
-      DeserializationError error = deserializeJson(doc, payload);
+        DynamicJsonDocument doc(8192);
+        DeserializationError error = deserializeJson(doc, payload);
 
-      if (error) {
-        LOG_PRINTF("[Sync] deserializeJson() failed: %s\n", error.c_str());
-      } else {
-        uint32_t newCount = 0;
-        // tempEvents is now static at function scope
+        if (error) {
+          LOG_PRINTF("[Sync] deserializeJson() failed: %s\n", error.c_str());
+        } else {
+          uint32_t newCount = 0;
+          // tempEvents is now static at function scope
 
-        for (uint32_t i = 0; i < calendarEventCount; i++) {
-          if (calendarEvents[i].linkedTaskId != 0) {
-            tempEvents[newCount++] = calendarEvents[i];
+          for (uint32_t i = 0; i < calendarEventCount; i++) {
+            if (calendarEvents[i].linkedTaskId != 0) {
+              tempEvents[newCount++] = calendarEvents[i];
+            }
           }
+
+          JsonArray events = doc.as<JsonArray>();
+          for (JsonObject e : events) {
+            if (newCount >= MAX_CALENDAR_EVENTS)
+              break;
+            const char* title = e["title"] | "Busy";
+            int year = e["year"] | calYear;
+            int month = e["month"] | calMonth;
+            int day = e["day"] | calDay;
+            int hour = e["hour"] | 9;
+            int minute = e["minute"] | 0;
+            int duration = e["duration"] | 60;
+            const char* notes = e["notes"] | "";
+            const char* location = e["location"] | "";
+
+            tempEvents[newCount++] = CalendarEvent(title, year, month, day, hour, minute, duration, notes, location, 0);
+          }
+
+          calendarEventCount = newCount;
+          for (uint32_t i = 0; i < calendarEventCount; i++) {
+            calendarEvents[i] = tempEvents[i];
+          }
+
+          LOG_PRINTF("[Sync] Calendar updated. Total events: %d\n",
+                     calendarEventCount);
         }
-
-        JsonArray events = doc.as<JsonArray>();
-        for (JsonObject e : events) {
-          if (newCount >= MAX_CALENDAR_EVENTS)
-            break;
-          const char* title = e["title"] | "Busy";
-          int year = e["year"] | calYear;
-          int month = e["month"] | calMonth;
-          int day = e["day"] | calDay;
-          int hour = e["hour"] | 9;
-          int minute = e["minute"] | 0;
-          int duration = e["duration"] | 60;
-          const char* notes = e["notes"] | "";
-          const char* location = e["location"] | "";
-
-          tempEvents[newCount++] = CalendarEvent(title, year, month, day, hour, minute, duration, notes, location, 0);
-        }
-
-        calendarEventCount = newCount;
-        for (uint32_t i = 0; i < calendarEventCount; i++) {
-          calendarEvents[i] = tempEvents[i];
-        }
-
-        LOG_PRINTF("[Sync] Calendar updated. Total events: %d\n",
-                   calendarEventCount);
+      } else {
+        LOG_PRINTF("[Sync] HTTP GET failed, code: %d\n", httpCode);
       }
     } else {
-      LOG_PRINTF("[Sync] HTTP GET failed, error: %s\n",
+      LOG_PRINTF("[Sync] HTTP Connection failed, error: %s\n",
                  http.errorToString(httpCode).c_str());
     }
-  } else {
-    LOG_PRINTF("[Sync] HTTP Connection failed, error: %s\n",
-               http.errorToString(httpCode).c_str());
+
+    http.end();
   }
 
-  http.end();
   displayMgr.drawSyncStatus("Sync Complete!");
   delay(1000); 
   WiFi.mode(WIFI_OFF);
@@ -1656,10 +1658,10 @@ void handleSleepState() {
   // Configure wake-up sources
   esp_sleep_enable_timer_wakeup(SLEEP_DURATION_US);
 
-  // Enable GPIO 14 LOW_LEVEL wake only when going to sleep!
-  // Doing this in setup() causes an interrupt storm if the button is held low.
+  // Enable GPIO 14 HIGH_LEVEL wake only when going to sleep!
+  // Doing this in setup() causes an interrupt storm if the button is held high.
   gpio_wakeup_enable(static_cast<gpio_num_t>(Pins::WAKE_BTN),
-                     GPIO_INTR_LOW_LEVEL);
+                     GPIO_INTR_HIGH_LEVEL);
   esp_sleep_enable_gpio_wakeup();
 
   // Clear wake flag before sleeping
@@ -1667,6 +1669,7 @@ void handleSleepState() {
 
   // DO NOT power down VDDSDIO during light sleep! It crashes the flash memory
   // causing a reboot (which explains the random color flashing on wake).
+  // TODO: Potential Dead Code
   // esp_sleep_pd_config(ESP_PD_DOMAIN_VDDSDIO, ESP_PD_OPTION_OFF);
 
   // Enter light sleep
@@ -1674,8 +1677,8 @@ void handleSleepState() {
 
 
 
-  // Re-attach active-mode falling edge interrupt just to be safe
-  attachInterrupt(Pins::WAKE_BTN, wakeButtonISR, FALLING);
+  // Re-attach active-mode rising edge interrupt just to be safe
+  attachInterrupt(Pins::WAKE_BTN, wakeButtonISR, RISING);
 
   // Check wake reason immediately after waking
   if (wakeRequested) {
@@ -1709,8 +1712,8 @@ void setup() {
   LOG_PRINTLN("[Setup] keyboardMgr.init() returned");
   delay(100); // Stabilization delay
 
-  pinMode(Pins::WAKE_BTN, INPUT_PULLUP);
-  attachInterrupt(Pins::WAKE_BTN, wakeButtonISR, FALLING);
+  pinMode(Pins::WAKE_BTN, INPUT);
+  attachInterrupt(Pins::WAKE_BTN, wakeButtonISR, RISING);
 
   // Create system event queue
   systemEventQueue = xQueueCreate(10, sizeof(SystemEvent));

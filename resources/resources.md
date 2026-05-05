@@ -13,20 +13,22 @@ The system alternates between ACTIVE mode (interactive TFT) and SLEEP mode (ePap
 
 ## Pin Configuration
 
-### ePaper Display (Software SPI - bit-banged)
+### ePaper Display (Hardware SPI - FSPI/SPI2)
 | Signal | GPIO | Notes |
 |--------|------|-------|
-| CS/SS | 7 | Chip select |
-| DC | 16 | Data/Command pin |
-| RST | 15 | Reset pin |
-| BUSY | 4 | Busy status (dedicated pin) |
+| SCLK   | 5    | SPI Clock |
+| MOSI   | 6    | SPI Data Out |
+| CS/SS  | 7    | Chip select |
+| DC     | 16   | Data/Command pin |
+| RST    | 15   | Reset pin |
+| BUSY   | 4    | Busy status (dedicated pin) |
 
-### TFT Display (SPI - VSPI hardware bus)
+### TFT Display (SPI - HSPI/SPI3 hardware bus)
 | Signal | GPIO | Notes |
 |--------|------|-------|
-| SCLK | 12 | VSPI clock |
-| MOSI | 11 | VSPI data out |
-| MISO | NC | Not connected |
+| SCLK | 12 | HSPI clock |
+| MOSI | 11 | HSPI data out |
+| MISO | 8  | HSPI data in |
 | CS | 10 | Chip select |
 | DC | 9 | Data/Command pin |
 | RESET | 13 | Hardware reset |
@@ -44,9 +46,9 @@ The system alternates between ACTIVE mode (interactive TFT) and SLEEP mode (ePap
 | WAKE_BTN | 14 | Physical button to wake from sleep (moved from 15 to avoid ePaper RST conflict) |
 
 ### Pin Configuration Notes
-- TFT uses VSPI hardware bus (SCK=12, MOSI=11)
-- ePaper uses Software SPI (bit-banged, no HW SPI pins needed)
-- Each display has independent pins - no shared SPI bus
+- TFT uses HSPI hardware bus (SCK=12, MOSI=11, MISO=8)
+- ePaper uses Hardware FSPI bus (SCK=5, MOSI=6)
+- Each display has independent SPI buses to avoid contention
 - LCD_BL on GPIO 42 is dedicated to TFT backlight control
 
 ---
@@ -143,17 +145,18 @@ private:
 ## Architecture Notes
 
 ### Dual Display Architecture
-The TFT and ePaper use **independent SPI configurations**:
-- **TFT**: Uses VSPI hardware bus (SCK=12, MOSI=11) via TFT_eSPI
-- **ePaper**: Uses Software SPI (bit-banged) via GxEPD2
+The TFT and ePaper use **independent Hardware SPI configurations**:
+- **TFT**: Uses HSPI hardware bus (SCK=12, MOSI=11, MISO=8) via TFT_eSPI
+- **ePaper**: Uses FSPI hardware bus (SCK=5, MOSI=6) via GxEPD2
 
 ```cpp
 // display_mgr.cpp
-GxEPD2_213_B74 epd_instance(7, 16, 15, 4);  // CS=7, DC=16, RST=15, BUSY=4
+GxEPD2_213_B74 epd_instance(Pins::EP_CS, Pins::EP_DC, Pins::EP_RST, Pins::EP_BUSY);
 GxEPD2_BW<GxEPD2_213_B74, GxEPD2_213_B74::HEIGHT> epd(epd_instance);
 
-// Initialization - ePaper uses Software SPI (no HW SPI needed)
-epd.init(115200, true, 20, false);
+// Initialization - ePaper uses FSPI (Pins::EP_SCK, -1, Pins::EP_MOSI, Pins::EP_CS)
+SPI.begin(Pins::EP_SCK, -1, Pins::EP_MOSI, Pins::EP_CS);
+epd.init(115200);
 ```
 
 ### Sleep/Wake Architecture
@@ -262,8 +265,8 @@ if (wakeRequested) {
 2. ~~**Dual-SPI bus collision**~~ - Fixed: ePaper and TFT share FSPI bus with separate CS pins
 3. ~~**Infinite sleep loop**~~ - Fixed: volatile wakeRequested flag checked after light sleep
 4. ~~**Keyboard repeat characters**~~ - Fixed: lastKey reset when no valid key
-5. ~~**TFT_MISO**~~ - Fixed: Changed from -1 to 12
-6. ~~**WAKE_BTN pin**~~ - Fixed: Changed from 0 to 15
+5. ~~TFT_MISO~~ - Fixed: Set to 8 for HSPI stability
+6. ~~WAKE_BTN pin~~ - Fixed: Changed from 15 to 14 to avoid ePaper RST conflict
 7. ~~**Arduino String heap fragmentation**~~ - Fixed: Changed to std::string
 8. ~~**ST7735S wake time**~~ - Fixed: Added delay(120) after SLPOUT
 
@@ -283,17 +286,17 @@ lib_deps =
 	adafruit/Adafruit BusIO@^1.16.1
 
 build_flags =
-	; TFT_eSPI (VSPI hardware) - SCK=12, MOSI=11, CS=10, DC=9, RST=13
+	; TFT_eSPI (HSPI hardware) - SCK=12, MOSI=11, MISO=8, CS=10, DC=9, RST=13
 	-D USER_SETUP_LOADED=1
 	-D ST7735_DRIVER=1
-	-D TFT_MISO=-1
+	-D TFT_MISO=8
 	-D TFT_MOSI=11
 	-D TFT_SCLK=12
 	-D TFT_CS=10
 	-D TFT_DC=9
 	-D TFT_RST=13
 	-D TFT_BL=42
-	; GxEPD2 (Software SPI) - CS=7, DC=16, RST=15, BUSY=4
+	; GxEPD2 (FSPI hardware) - SCK=5, MOSI=6, CS=7, DC=16, RST=15, BUSY=4
 	-D GxEPD2_DISPLAY_CLASS=Generic_EPD
 	-D GxEPD2_DRIVER_CLASS=GxEPD2_213_B74
 ```

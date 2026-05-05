@@ -7,8 +7,8 @@ This document captures the current debugging state of the StikE firmware project
 ### Hardware
 
 - **Microcontroller**: ESP32-S3 DevKitC
-- **TFT Display**: ST7735S (128x160 resolution), driven over HSPI (SPI3). Backlight connected to GPIO 42 (TFT_BL).
-- **E-Paper Display**: GxEPD2_213_B74 (B74 controller) driven over FSPI (SPI2).
+- **TFT Display**: ST7735S (128x160 resolution), driven over HSPI (SPI3). SCK=12, MOSI=11, MISO=8, CS=10, DC=9. Backlight on GPIO 42.
+- **E-Paper Display**: GxEPD2_213_B74 (B74 controller) driven over FSPI (SPI2). SCK=5, MOSI=6, CS=7, DC=16, RST=15, BUSY=4.
 - **Input**: I2C keyboard on GPIO 18 (SDA), 21 (SCL)
 - **Wake Button**: GPIO 14
 

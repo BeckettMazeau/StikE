@@ -20,7 +20,7 @@ constexpr uint8_t EP_BUSY = 4;
 // SCK=12, MOSI=11, CS=10, DC=9, RST=13
 constexpr uint8_t LCD_SCK   = 12;
 constexpr uint8_t LCD_MOSI  = 11;
-constexpr uint8_t LCD_MISO  = 0xFF;
+constexpr uint8_t LCD_MISO  = 8;
 constexpr uint8_t LCD_CS    = 10;
 constexpr uint8_t LCD_DC    = 9;
 constexpr uint8_t LCD_RST   = 13;
