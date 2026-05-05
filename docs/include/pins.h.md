@@ -25,15 +25,16 @@ Uses the global SPI object (FSPI, SPI2 on S3).
 Uses Hardware VSPI (via `TFT_eSPI` user setup).
 - `LCD_SCK = 12`
 - `LCD_MOSI = 11`
-- `LCD_MISO = 0xFF`
+- `LCD_MISO = 8`
 - `LCD_CS = 10`
 - `LCD_DC = 9`
 - `LCD_RST = 13`
 - `LCD_BL = 42`: TFT Backlight control. Note: To completely turn off the TFT backlight and override the ESP32 PWM timer, this pin must be explicitly configured as an OUTPUT and pulled to GND using `digitalWrite(LOW)`.
 
-**Keyboard (I2C) Pins:**
+**Keyboard (I2C) Pins:** 
+(Must avoid USB D+ D- Pins 19 and 20)
 - `KEY_SDA = 18`
-- `KEY_SCL = 21` (Moved to 21 to avoid conflict with ePaper DC).
+- `KEY_SCL = 21` 
 
 **Wake Button Pin:**
 - `WAKE_BTN = 14` (Moved to 14 to avoid conflict with ePaper RST).

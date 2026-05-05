@@ -1658,10 +1658,10 @@ void handleSleepState() {
   // Configure wake-up sources
   esp_sleep_enable_timer_wakeup(SLEEP_DURATION_US);
 
-  // Enable GPIO 14 LOW_LEVEL wake only when going to sleep!
-  // Doing this in setup() causes an interrupt storm if the button is held low.
+  // Enable GPIO 14 HIGH_LEVEL wake only when going to sleep!
+  // Doing this in setup() causes an interrupt storm if the button is held high.
   gpio_wakeup_enable(static_cast<gpio_num_t>(Pins::WAKE_BTN),
-                     GPIO_INTR_LOW_LEVEL);
+                     GPIO_INTR_HIGH_LEVEL);
   esp_sleep_enable_gpio_wakeup();
 
   // Clear wake flag before sleeping
@@ -1677,8 +1677,8 @@ void handleSleepState() {
 
 
 
-  // Re-attach active-mode falling edge interrupt just to be safe
-  attachInterrupt(Pins::WAKE_BTN, wakeButtonISR, FALLING);
+  // Re-attach active-mode rising edge interrupt just to be safe
+  attachInterrupt(Pins::WAKE_BTN, wakeButtonISR, RISING);
 
   // Check wake reason immediately after waking
   if (wakeRequested) {
@@ -1712,8 +1712,8 @@ void setup() {
   LOG_PRINTLN("[Setup] keyboardMgr.init() returned");
   delay(100); // Stabilization delay
 
-  pinMode(Pins::WAKE_BTN, INPUT_PULLUP);
-  attachInterrupt(Pins::WAKE_BTN, wakeButtonISR, FALLING);
+  pinMode(Pins::WAKE_BTN, INPUT);
+  attachInterrupt(Pins::WAKE_BTN, wakeButtonISR, RISING);
 
   // Create system event queue
   systemEventQueue = xQueueCreate(10, sizeof(SystemEvent));

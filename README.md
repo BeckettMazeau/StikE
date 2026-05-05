@@ -42,6 +42,17 @@ Upon first boot, the system will initialize the displays and load default data i
 
 - **Active Mode:** Interact with the task list, calendar, and settings menus on the TFT display.
 - **Sleep Mode:** The TFT display turns off, and the ePaper display shows upcoming tasks and events.
+- **Pin Mapping:** 
+  | Component | Signal | GPIO | Bus |
+  | :--- | :--- | :--- | :--- |
+  | **ePaper** | SCK / MOSI | 5 / 6 | FSPI (SPI2) |
+  | | CS / DC / RST | 7 / 16 / 15 | |
+  | | BUSY | 4 | |
+  | **TFT** | SCK / MOSI | 12 / 11 | HSPI (SPI3) |
+  | | MISO / CS / DC | 8 / 10 / 9 | |
+  | | RST / BL | 13 / 42 | |
+  | **I2C Key** | SDA / SCL | 18 / 21 | I2C |
+  | **Wake** | Button | 14 | GPIO |
 
 ---
 
