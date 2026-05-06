@@ -1,4 +1,4 @@
-<h1>StikE</h1>
+# StikE
 
 ## Software Build Instructions
 
@@ -30,6 +30,6 @@ The active UI renders to the ST7735S TFT display utilizing software buffering ca
 
 Task and calendar data are persisted across power cycles utilizing fixed-size arrays (`MAX_TASKS = 20`, `MAX_CALENDAR_EVENTS = 50`) stored via the ESP32 Preferences library (NVS) as binary blobs, strictly avoiding dynamic memory allocation.
 
-## Documentation
+## Hackster.io Link
 
-[Hackster.io Placeholder Link](https://www.hackster.io/)
+[Insert Hackster.io Link Here]
