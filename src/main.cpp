@@ -120,7 +120,7 @@ uint32_t lastInputTime = 0;
 void sendSystemEvent(SystemEventType type, int param = 0) {
   if (systemEventQueue) {
     SystemEvent event = {type, param};
-    xQueueSendFromISR(systemEventQueue, &event, nullptr);
+    xQueueSend(systemEventQueue, &event, 0);
   }
 }
 
@@ -178,6 +178,9 @@ void keyboardTask(void* parameter) {
                     case 0x96: // Fn + P — Pomodoro
                         sendSystemEvent(SystemEventType::EVENT_TYPE_CHAR, 0x96);
                         break;
+                    case 0x8C: // Fn + Tab — Demo Mode
+                        sendSystemEvent(SystemEventType::EVENT_TOGGLE_DEMO);
+                        break;
                     default:
                         if (k >= 0x20 && k <= 0x7E) {
                             // Printable ASCII — carries the char as param
@@ -211,8 +214,14 @@ void saveTasks() {
     prefs.end();
     }
 
-// Forward declaration - defined later in this file
+// Forward declarations
+void syncTaskToCalendar(const TaskItem &task);
 void removeLinkedEvent(uint32_t taskId);
+void saveTasks();
+void loadTasks();
+void addDemoTasks();
+void addDemoEvents();
+void toggleDemoMode();
 
 void cleanupOldCompletedTasks() {
   // No-op: TaskItem does not store a completion date, so age-based cleanup
@@ -281,6 +290,13 @@ void loadTasks() {
 
   prefs.end();
   cleanupOldCompletedTasks();
+
+  // Sync loaded tasks with due dates to the calendar
+  for (uint32_t i = 0; i < taskCount; i++) {
+    if (tasks[i].hasDueDate) {
+      syncTaskToCalendar(tasks[i]);
+    }
+  }
 }
 
 // Add demo tasks (used when no saved tasks exist)
@@ -294,25 +310,97 @@ void addDemoTasks() {
 
 // Add demo events
 void addDemoEvents() {
-  calendarEvents[0] = CalendarEvent("Breakfast", 2000, 1, 1, 8, 0, 30,
+  if (calendarEventCount + 9 > MAX_CALENDAR_EVENTS) return;
+
+  calendarEvents[calendarEventCount++] = CalendarEvent("Breakfast", 2000, 1, 1, 8, 0, 30,
                                     "Eat healthy!", "Kitchen");
-  calendarEvents[1] = CalendarEvent("Coding StikE", 2000, 1, 1, 9, 30, 120,
+  calendarEvents[calendarEventCount++] = CalendarEvent("Coding StikE", 2000, 1, 1, 9, 30, 120,
                                     "Work on UI", "Office");
-  calendarEvents[2] = CalendarEvent("Lunch", 2000, 1, 1, 12, 0, 60,
+  calendarEvents[calendarEventCount++] = CalendarEvent("Lunch", 2000, 1, 1, 12, 0, 60,
                                     "Meeting with team", "Cafe");
-  calendarEvents[3] =
+  calendarEvents[calendarEventCount++] =
       CalendarEvent("Workout", 2000, 1, 1, 17, 0, 45, "Leg day", "Gym");
-  calendarEvents[4] =
+  calendarEvents[calendarEventCount++] =
       CalendarEvent("Dinner", 2000, 1, 1, 19, 0, 60, "Relax", "Home");
-  calendarEvents[5] = CalendarEvent("Planning", 2000, 1, 2, 10, 0, 90,
+  calendarEvents[calendarEventCount++] = CalendarEvent("Planning", 2000, 1, 2, 10, 0, 90,
                                     "Plan next week", "Office");
-  calendarEvents[6] = CalendarEvent("Call Alice", 2000, 1, 3, 14, 0, 30,
+  calendarEvents[calendarEventCount++] = CalendarEvent("Call Alice", 2000, 1, 3, 14, 0, 30,
                                     "Discuss project", "Phone");
-  calendarEvents[7] =
+  calendarEvents[calendarEventCount++] =
       CalendarEvent("Gym", 2000, 1, 4, 7, 0, 60, "Cardio", "Gym");
-  calendarEvents[8] = CalendarEvent("Weekly Sync", 2000, 1, 5, 11, 0, 60,
+  calendarEvents[calendarEventCount++] = CalendarEvent("Weekly Sync", 2000, 1, 5, 11, 0, 60,
                                     "All hands", "Conference Room");
-  calendarEventCount = 9;
+}
+
+void toggleDemoMode() {
+    bool demoExists = false;
+    const char* demoMarker = "(Demo)";
+    
+    // Check if any demo items exist
+    for (uint32_t i = 0; i < taskCount; i++) {
+        if (strstr(tasks[i].title, demoMarker)) {
+            demoExists = true;
+            break;
+        }
+    }
+    if (!demoExists) {
+        for (uint32_t i = 0; i < calendarEventCount; i++) {
+            if (strstr(calendarEvents[i].title, demoMarker)) {
+                demoExists = true;
+                break;
+            }
+        }
+    }
+
+    if (demoExists) {
+        // Remove demo tasks
+        uint32_t newCount = 0;
+        for (uint32_t i = 0; i < taskCount; i++) {
+            if (!strstr(tasks[i].title, demoMarker)) {
+                tasks[newCount++] = tasks[i];
+            }
+        }
+        taskCount = newCount;
+
+        // Remove demo events
+        uint32_t newEventCount = 0;
+        for (uint32_t i = 0; i < calendarEventCount; i++) {
+            if (!strstr(calendarEvents[i].title, demoMarker)) {
+                calendarEvents[newEventCount++] = calendarEvents[i];
+            }
+        }
+        calendarEventCount = newEventCount;
+    } else {
+        // Add demo tasks (simple repetition for padding)
+        const char* sampleTitles[] = {
+            "Buy groceries (Demo)",
+            "Walk the dog (Demo)",
+            "Code StikE (Demo)",
+            "Read a book (Demo)",
+            "Call Mom (Demo)",
+            "Review PR #123 (Demo)",
+            "Update firmware (Demo)",
+            "Fix GUI bug (Demo)"
+        };
+        int numSamples = sizeof(sampleTitles) / sizeof(sampleTitles[0]);
+        
+        for (int i = 0; i < 12 && taskCount < MAX_TASKS; i++) {
+            tasks[taskCount++] = TaskItem(sampleTitles[i % numSamples], false, millis() + i);
+        }
+        
+        // Add demo events
+        if (calendarEventCount + 5 <= MAX_CALENDAR_EVENTS) {
+            calendarEvents[calendarEventCount++] = CalendarEvent("Lunch Meeting (Demo)", 2026, 5, 6, 12, 0, 60, "Important meeting", "Conference Room");
+            calendarEvents[calendarEventCount++] = CalendarEvent("Gym (Demo)", 2026, 5, 6, 17, 30, 90, "Leg day", "Health Club");
+            calendarEvents[calendarEventCount++] = CalendarEvent("Dinner (Demo)", 2026, 5, 6, 19, 0, 120, "Relax with family", "Home");
+            calendarEvents[calendarEventCount++] = CalendarEvent("Morning Run (Demo)", 2026, 5, 7, 7, 0, 45, "Cardio", "Park");
+            calendarEvents[calendarEventCount++] = CalendarEvent("Study Session (Demo)", 2026, 5, 7, 10, 0, 120, "Focus on Rust", "Library");
+        }
+    }
+    
+    updateFilteredTasks();
+    saveTasks();
+    uiDirty = true;
 }
 
 void removeLinkedEvent(uint32_t taskId) {
@@ -372,15 +460,15 @@ void wakeToActive() {
     uiDirty = true;
 }
 
-void parseNaturalLanguageTime(const char* title, int& hour) {
+bool parseNaturalLanguageTime(const char* title, int& hour) {
     const char* ptr = strchr(title, '@');
-    if (!ptr) return;
+    if (!ptr) return false;
     
     ptr++; // move past '@'
     char* endPtr;
     long val = strtol(ptr, &endPtr, 10);
     
-    if (ptr == endPtr) return; // No number found
+    if (ptr == endPtr) return false; // No number found
     
     // Check for am/pm with explicit bounds check
     bool isPm = false;
@@ -395,7 +483,9 @@ void parseNaturalLanguageTime(const char* title, int& hour) {
     
     if (val >= 0 && val < 24) {
         hour = val;
+        return true;
     }
+    return false;
 }
 
 static void handleUIListEvent(const SystemEvent &event) {
@@ -442,15 +532,6 @@ static void handleUIListEvent(const SystemEvent &event) {
         tasks[realIdx].completedYear = calYear;
         tasks[realIdx].completedMonth = calMonth;
         tasks[realIdx].completedDay = calDay;
-      }
-      updateFilteredTasks();
-      if (selectedTaskIndex >= filteredTaskCount && filteredTaskCount > 0) {
-        selectedTaskIndex = filteredTaskCount - 1;
-      } else if (filteredTaskCount == 0) {
-        selectedTaskIndex = -1;
-      }
-      if (taskListTopIndex >= filteredTaskCount) {
-        taskListTopIndex = filteredTaskCount > 0 ? filteredTaskCount - 1 : 0;
       }
       saveTasks();
       uiDirty = true;
@@ -523,28 +604,6 @@ static void handleUIListEvent(const SystemEvent &event) {
       taskListTopIndex = 0;
       uiDirty = true;
     }
-    // 0x9A (Fn+A) opens Alignment Mode
-    else if (event.param == 0x9A) {
-      currentState = SystemState::STATE_UI_ALIGN;
-      displayMgr.clearFullHardwareScreen();
-      uiDirty = true;
-    }
-    // 0xA8 (Fn+C) opens Calendar
-    else if (event.param == 0xA8) {
-      currentState = SystemState::STATE_UI_CALENDAR;
-      uiDirty = true;
-    }
-    // 0x9F (Fn+H) opens Help
-    else if (event.param == 0x9F) {
-      previousState = currentState;
-      currentState = SystemState::STATE_UI_HELP;
-      uiDirty = true;
-    }
-    // 0x96 (Fn+P) opens Pomodoro
-    else if (event.param == 0x96) {
-      currentState = SystemState::STATE_UI_POMODORO;
-      uiDirty = true;
-    }
     break;
 
   case SystemEventType::EVENT_BACKSPACE:
@@ -602,11 +661,6 @@ static bool handleSharedTaskEditInput(const SystemEvent &event) {
         taskEditHasDue = false;
         uiDirty = true;
       }
-    }
-    if (event.param == 0x9F) { // Fn + H
-      previousState = currentState;
-      currentState = SystemState::STATE_UI_HELP;
-      uiDirty = true;
     }
     break;
   }
@@ -717,9 +771,11 @@ static void handleUIAddTaskEvent(const SystemEvent &event) {
   if (handleSharedTaskEditInput(event)) {
     if (inputBufferLen > 0 && taskCount < MAX_TASKS) {
       int finalHour = taskEditHour;
-      parseNaturalLanguageTime(inputBuffer, finalHour);
+      bool foundTime = parseNaturalLanguageTime(inputBuffer, finalHour);
+      bool finalHasDue = taskEditHasDue || foundTime;
+
       tasks[taskCount] =
-          TaskItem(inputBuffer, false, millis(), taskEditHasDue, taskEditYear,
+          TaskItem(inputBuffer, false, millis(), finalHasDue, taskEditYear,
                    taskEditMonth, taskEditDay, finalHour, taskEditMinute);
       syncTaskToCalendar(tasks[taskCount]);
       taskCount++;
@@ -782,16 +838,6 @@ static void handleUIAlignEvent(const SystemEvent &event) {
     enterSleepMode();
     break;
   case SystemEventType::EVENT_TYPE_CHAR:
-    if (event.param == 0x9F) { // Fn + H
-      previousState = currentState;
-      currentState = SystemState::STATE_UI_HELP;
-      uiDirty = true;
-    } else if (event.param == 0x9B) { // Fn + S
-      previousState = currentState;
-      currentState = SystemState::STATE_UI_SETTINGS;
-      settingsSelectedIndex = 0;
-      uiDirty = true;
-    }
     break;
   case SystemEventType::EVENT_NAV_UP:
     displayMgr.offsetY--;
@@ -862,7 +908,7 @@ static void handleUICalendarEvent(const SystemEvent& event) {
                 for (uint32_t i = 0; i < calendarEventCount; i++) {
                     if (calendarEvents[i].day == calDay && calendarEvents[i].month == calMonth && calendarEvents[i].year == calYear) dayCount++;
                 }
-                if (selectedEventIndex < dayCount - 1) selectedEventIndex++;
+                if (dayCount > 0 && selectedEventIndex < dayCount - 1) selectedEventIndex++;
             } else {
                 calDay++;
                 if (calDay > 31) calDay = 31;
@@ -932,15 +978,6 @@ static void handleUICalendarEvent(const SystemEvent& event) {
                 eventEditDuration = 60;
                 currentState = SystemState::STATE_UI_ADD_EVENT;
                 uiDirty = true;
-            } else if (event.param == 0x9F) { // Fn + H
-                previousState = currentState;
-                currentState = SystemState::STATE_UI_HELP;
-                uiDirty = true;
-            } else if (event.param == 0x9B) { // Fn + S
-                previousState = currentState;
-                currentState = SystemState::STATE_UI_SETTINGS;
-                settingsSelectedIndex = 0;
-                uiDirty = true;
             } else if (event.param == 0x7F) { // Delete
                 if (currentCalendarView == CalendarView::DAY && selectedEventIndex >= 0) {
                     int dayIdx = 0;
@@ -997,16 +1034,6 @@ static void handleUIAddEventEvent(const SystemEvent& event) {
                     inputBuffer[inputBufferLen] = '\0';
                     uiDirty = true;
                 }
-            }
-            if (c == 0x9F) { // Fn + H
-                previousState = currentState;
-                currentState = SystemState::STATE_UI_HELP;
-                uiDirty = true;
-            } else if (c == 0x9B) { // Fn + S
-                previousState = currentState;
-                currentState = SystemState::STATE_UI_SETTINGS;
-                settingsSelectedIndex = 0;
-                uiDirty = true;
             }
             break;
         }
@@ -1084,18 +1111,6 @@ static void handleUIEventDetailEvent(const SystemEvent &event) {
       uiDirty = true;
     }
     break;
-  case SystemEventType::EVENT_TYPE_CHAR:
-    if (event.param == 0x9F) {
-      previousState = currentState;
-      currentState = SystemState::STATE_UI_HELP;
-      uiDirty = true;
-    } else if (event.param == 0x9B) {
-      previousState = currentState;
-      currentState = SystemState::STATE_UI_SETTINGS;
-      settingsSelectedIndex = 0;
-      uiDirty = true;
-    }
-    break;
   default:
     break;
   }
@@ -1138,6 +1153,8 @@ void syncGoogleCalendar() {
   }
 
   if (WiFi.status() != WL_CONNECTED) {
+    WiFi.disconnect(true);
+    delay(100);
     WiFi.mode(WIFI_OFF);
     return;
   }
@@ -1161,6 +1178,8 @@ void syncGoogleCalendar() {
   if (strlen(gcalURL) == 0) {
     displayMgr.drawSyncStatus("Time Updated!");
     delay(1000); // Show "Time Updated!" for a second
+    WiFi.disconnect(true);
+    delay(100);
     WiFi.mode(WIFI_OFF);
     uiDirty = true;
     return;
@@ -1168,22 +1187,42 @@ void syncGoogleCalendar() {
 
   displayMgr.drawSyncStatus("Fetching Cal...");
   {
+    WiFiClient client;
+    WiFiClientSecure secureClient;
+    secureClient.setInsecure(); // Ignore SSL certificate validation
+
     HTTPClient http;
     http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
-    http.begin(gcalURL);
-    int httpCode = http.GET();
+    
+    bool beginSuccess = false;
+    if (String(gcalURL).startsWith("https")) {
+      beginSuccess = http.begin(secureClient, gcalURL);
+    } else {
+      beginSuccess = http.begin(client, gcalURL);
+    }
 
-    if (httpCode > 0) {
-      if (httpCode == HTTP_CODE_OK) {
-        String payload = http.getString();
-        DynamicJsonDocument doc(8192);
-        DeserializationError error = deserializeJson(doc, payload);
+    if (beginSuccess) {
+      int httpCode = http.GET();
 
-        if (error) {
+      if (httpCode > 0) {
+        if (httpCode == HTTP_CODE_OK) {
+          DynamicJsonDocument doc(8192);
+          DeserializationError error = deserializeJson(doc, http.getStream());
+
+          if (!error) {
           uint32_t newCount = 0;
           // tempEvents is now static at function scope
 
           for (uint32_t i = 0; i < calendarEventCount; i++) {
+            // Preserve linked tasks AND local manual events (where linkedTaskId is 0 but they are not Google events)
+            // Currently we consider any event with linkedTaskId != 0 as a task event.
+            // Google events are always given linkedTaskId = 0.
+            // Local manual events also have linkedTaskId = 0.
+            // To distinguish, we look at the location/notes or just preserve ALL local events.
+            // Since Google sync is AUTHORITATIVE for remote events, we only preserve what's not from Google.
+            // For now, let's just keep everything that was already there and APPEND Google events,
+            // but that would cause duplicates if we sync twice.
+            // The existing logic only preserves tasks. Let's stick to that but ensure it works.
             if (calendarEvents[i].linkedTaskId != 0) {
               tempEvents[newCount++] = calendarEvents[i];
             }
@@ -1210,16 +1249,17 @@ void syncGoogleCalendar() {
           for (uint32_t i = 0; i < calendarEventCount; i++) {
             calendarEvents[i] = tempEvents[i];
           }
-
+          }
         }
       }
+      http.end();
     }
-
-    http.end();
   }
 
   displayMgr.drawSyncStatus("Sync Complete!");
   delay(1000); 
+  WiFi.disconnect(true);
+  delay(100);
   WiFi.mode(WIFI_OFF);
   uiDirty = true;
 }
@@ -1362,13 +1402,6 @@ static void handleUISettingsEvent(const SystemEvent& event) {
             }
             break;
             
-        case SystemEventType::EVENT_TYPE_CHAR:
-            if (event.param == 0x9F) { 
-                previousState = currentState;
-                currentState = SystemState::STATE_UI_HELP;
-                uiDirty = true;
-            }
-            break;
 
         default:
             break;
@@ -1395,16 +1428,6 @@ static void handleUIQuickAddEvent(const SystemEvent& event) {
                 inputBuffer[inputCursorPos++] = static_cast<char>(c);
                 inputBufferLen++;
                 inputBuffer[inputBufferLen] = '\0';
-                uiDirty = true;
-            }
-            if (c == 0x9F) { // Fn + H
-                previousState = currentState;
-                currentState = SystemState::STATE_UI_HELP;
-                uiDirty = true;
-            } else if (c == 0x9B) { // Fn + S
-                previousState = currentState;
-                currentState = SystemState::STATE_UI_SETTINGS;
-                settingsSelectedIndex = 0;
                 uiDirty = true;
             }
             break;
@@ -1469,8 +1492,15 @@ static void handleUIPomodoroEvent(const SystemEvent& event) {
     switch (event.type) {
         case SystemEventType::EVENT_CANCEL:
             if (pomodoroIsRunning) {
+                // Pause but stay on Pomodoro screen — back-populate remaining time
                 pomodoroIsRunning = false;
+                pomodoroWorkMinutes = (pomodoroSecondsRemaining + 59) / 60; // round up to nearest minute
+                pomodoroConfigField = 0;
+                displayMgr.turnOnTFT();
+                displayMgr.setTFTBrightness(tftBrightness);
             } else {
+                // Fully leaving Pomodoro — restore ePaper to boot logo
+                displayMgr.drawEpaperLogo();
                 currentState = SystemState::STATE_UI_LIST;
             }
             uiDirty = true;
@@ -1478,6 +1508,8 @@ static void handleUIPomodoroEvent(const SystemEvent& event) {
 
         case SystemEventType::EVENT_BACKSPACE:
             if (!pomodoroIsRunning) {
+                // Fully leaving Pomodoro — restore ePaper to boot logo
+                displayMgr.drawEpaperLogo();
                 currentState = SystemState::STATE_UI_LIST;
                 uiDirty = true;
             }
@@ -1601,7 +1633,7 @@ void setup() {
 
   // Create keyboard task on core 0
   BaseType_t result = xTaskCreatePinnedToCore(keyboardTask, "KeyboardTask",
-                                              2048, // Stack size
+                                              4096, // Stack size
                                               nullptr,
                                               1, // Priority
                                               nullptr,
@@ -1620,11 +1652,15 @@ void setup() {
     prefs.getString("wifiPass", "").toCharArray(wifiPassword, INPUT_BUFFER_SIZE);
     prefs.getString("gcalURL", "").toCharArray(gcalURL, INPUT_BUFFER_SIZE);
     prefs.end();
-loadTasks();
+    addDemoEvents();
+    loadTasks();
     if (taskCount == 0) {
         addDemoTasks();
+        // Sync demo tasks too
+        for (uint32_t i = 0; i < taskCount; i++) {
+            if (tasks[i].hasDueDate) syncTaskToCalendar(tasks[i]);
+        }
     }
-    addDemoEvents();
     currentState = SystemState::STATE_UI_LIST;
     updateFilteredTasks();
     selectedTaskIndex = (filteredTaskCount > 0) ? 0 : -1;
@@ -1688,17 +1724,60 @@ void loop() {
                 break;
         }
 
-        // Global handler for Settings
-        if (event.type == SystemEventType::EVENT_TYPE_CHAR && event.param == 0x9B) {
-            previousState = currentState;
-            currentState = SystemState::STATE_UI_SETTINGS;
-            settingsSelectedIndex = 0;
-            uiDirty = true;
+        // Global functional key handlers
+        if (event.type == SystemEventType::EVENT_TYPE_CHAR) {
+            uint8_t k = (uint8_t)event.param;
+            bool stateChanged = false;
+            SystemState nextState = currentState;
+
+            switch (k) {
+                case 0x9B: // Fn + S: Settings
+                    nextState = SystemState::STATE_UI_SETTINGS;
+                    settingsSelectedIndex = 0;
+                    stateChanged = true;
+                    break;
+                case 0xA8: // Fn + C: Calendar
+                    nextState = SystemState::STATE_UI_CALENDAR;
+                    stateChanged = true;
+                    break;
+                case 0x9F: // Fn + H: Help
+                    nextState = SystemState::STATE_UI_HELP;
+                    stateChanged = true;
+                    break;
+                case 0x96: // Fn + P: Pomodoro
+                    nextState = SystemState::STATE_UI_POMODORO;
+                    stateChanged = true;
+                    break;
+                case 0x9A: // Fn + A: Alignment
+                    nextState = SystemState::STATE_UI_ALIGN;
+                    displayMgr.clearFullHardwareScreen();
+                    stateChanged = true;
+                    break;
+            }
+
+            if (stateChanged && nextState != currentState && !isEditingSetting) {
+                // Clear screen artifacts when navigating away from alignment mode
+                if (currentState == SystemState::STATE_UI_ALIGN) {
+                    displayMgr.clearFullHardwareScreen();
+                }
+                // Restore ePaper boot logo when leaving Pomodoro (only if timer is stopped)
+                if (currentState == SystemState::STATE_UI_POMODORO && !pomodoroIsRunning) {
+                    displayMgr.drawEpaperLogo();
+                }
+                previousState = currentState;
+                currentState = nextState;
+                uiDirty = true;
+            }
         }
 
         // A sleep transition mid-drain: stop processing immediately
         if (currentState == SystemState::STATE_SLEEP) {
             return;
+        }
+
+        // Handle Demo Mode toggle
+        if (event.type == SystemEventType::EVENT_TOGGLE_DEMO) {
+            toggleDemoMode();
         }
     }
 
@@ -1781,12 +1860,12 @@ void loop() {
                 }
             } else if (!displayMgr.isTFTOn()) {
                 // Update ePaper only when TFT is off
-                if (now - pomodoroLastEpaperUpdate >= 60000) {
+                if (now - pomodoroLastEpaperUpdate >= 120000) {
                     const char* taskTitle = (pomodoroSelectedTaskId >= 0) ? tasks[pomodoroSelectedTaskId].title : "No Task";
                     displayMgr.drawEpaperPomodoro(pomodoroSecondsRemaining / 60, pomodoroSecondsRemaining % 60, pomodoroIsWorkMode, taskTitle, true);
                     pomodoroLastEpaperUpdate = now;
                     pomodoroLastPartialUpdate = now;
-                } else if (now - pomodoroLastPartialUpdate >= 10000) {
+                } else if (now - pomodoroLastPartialUpdate >= 3000) {
                     const char* taskTitle = (pomodoroSelectedTaskId >= 0) ? tasks[pomodoroSelectedTaskId].title : "No Task";
                     displayMgr.drawEpaperPomodoro(pomodoroSecondsRemaining / 60, pomodoroSecondsRemaining % 60, pomodoroIsWorkMode, taskTitle, false);
                     pomodoroLastPartialUpdate = now;

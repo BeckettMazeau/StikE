@@ -153,8 +153,14 @@ void DisplayManager::drawBootLogo() {
 
 void DisplayManager::drawEpaperLogo() {
     // Ensure SPI bus is ready
+    pinMode(Pins::LCD_CS, OUTPUT);
+    digitalWrite(Pins::LCD_CS, HIGH); // Ensure TFT is not listening
+    
+    SPI.end(); // Clear any previous state
     SPI.begin(Pins::EP_SCK, -1, Pins::EP_MOSI, Pins::EP_CS);
+    delay(100);
     epd.init(115200);
+    delay(300); // Increased initialization delay
     epd.setRotation(1);
     epd.setFullWindow();
 
@@ -187,10 +193,25 @@ void DisplayManager::drawEpaperLogo() {
 
 void DisplayManager::turnOnTFT() {
     if (!tftOn) {
-        // No more shared pin configuration needed - LCD_BL on GPIO 42 is dedicated
-        tft.writecommand(ST7735_SLPOUT);
+        // The ePaper drawing functions call SPI.end() to reset bus state,
+        // so the TFT's SPI bus (HSPI) must be fully re-initialized before
+        // issuing any commands to the ST7735S, or the screen will be corrupted.
+        SPI.end(); // Clear any residual ePaper SPI state
+        
+        // Re-initialize the TFT driver (this re-configures HSPI internally via TFT_eSPI)
+        tft.init();
+        tft.setRotation(1);
+        tft.setSwapBytes(true);
+        
+        // Re-enable backlight
+        pinMode(Pins::LCD_BL, OUTPUT);
+        analogWrite(Pins::LCD_BL, 255);
+        
         tftWakeTime = millis() + 120; // Physical wake-up time for ST7735S
         tftOn = true;
+        
+        // Force a full redraw on next cycle since we reinited the TFT
+        fullRedrawPending = true;
     }
 }
 
@@ -206,8 +227,10 @@ void DisplayManager::checkTFTWakeDelay() {
 
 void DisplayManager::turnOffTFT() {
     if (tftOn) {
-        tft.writecommand(ST7735_SLPIN);
-        // Explicitly switch to GPIO mode and pull to GND
+        // Just cut power to the backlight — visually blanks the TFT without
+        // requiring SPI traffic that could interfere with ePaper bus handoff.
+        // Since turnOnTFT() does a full tft.init() re-initialization, there is
+        // no need to send SLPIN here.
         pinMode(Pins::LCD_BL, OUTPUT);
         digitalWrite(Pins::LCD_BL, LOW);
         tftOn = false;
@@ -310,6 +333,9 @@ void DisplayManager::drawEpaperView(int index) {
     const EpaperViewItem& view = epaperViews[index];
 
     // Re-initialize ePaper to wake from hibernate before drawing
+    pinMode(Pins::LCD_CS, OUTPUT);
+    digitalWrite(Pins::LCD_CS, HIGH); // Ensure TFT is not listening
+
     epd.init(115200);
     delay(200);
     epd.setRotation(1);
@@ -429,6 +455,7 @@ void DisplayManager::drawEpaperView(int index) {
 void DisplayManager::updateEpaperPartial(int viewIndex) {
     // Re-assert ePaper SPI bus pins before drawing.
     // TFT init (HSPI) may have altered GPIO matrix routing for FSPI.
+    SPI.end();
     SPI.begin(Pins::EP_SCK, -1, Pins::EP_MOSI, Pins::EP_CS);
     delay(100);
     drawEpaperView(viewIndex);
@@ -444,23 +471,13 @@ constexpr int LINE_H   = 12;
 constexpr int MAX_LIST_LINES = 7;
 
 // Gradient helper: draws a vertical linear gradient manually using pixel strips
-void drawVGradient(TFT_eSprite* sprite, int x, int y, int w, int h, uint16_t color1, uint16_t color2) {
+void drawVGradient(TFT_eSprite* sprite, int x, int y, int w, int h, uint8_t r1, uint8_t g1, uint8_t b1, uint8_t r2, uint8_t g2, uint8_t b2) {
     if (!sprite) return;
     for (int i = 0; i < h; i++) {
-        // Interpolate colors
-        uint8_t r1 = (color1 >> 11) & 0x1F;
-        uint8_t g1 = (color1 >> 5) & 0x3F;
-        uint8_t b1 = color1 & 0x1F;
-        
-        uint8_t r2 = (color2 >> 11) & 0x1F;
-        uint8_t g2 = (color2 >> 5) & 0x3F;
-        uint8_t b2 = color2 & 0x1F;
-        
         uint8_t r = r1 + (r2 - r1) * i / h;
         uint8_t g = g1 + (g2 - g1) * i / h;
         uint8_t b = b1 + (b2 - b1) * i / h;
-        
-        uint16_t color = (r << 11) | (g << 5) | b;
+        uint16_t color = sprite->color565(r, g, b);
         sprite->drawFastHLine(x, y + i, w, color);
     }
 }
@@ -486,8 +503,6 @@ void DisplayManager::drawActiveGUI(const TaskItem tasks[], const int filteredInd
         return;
     }
 
-    const uint16_t headerStart = guiSprite->color565(0, 0, 140);
-    const uint16_t headerEnd   = guiSprite->color565(0, 0, 60);
     const bool listFull = (filteredCount >= MAX_TASKS);
     const int W = guiSprite->width();
     const int H = guiSprite->height();
@@ -495,7 +510,7 @@ void DisplayManager::drawActiveGUI(const TaskItem tasks[], const int filteredInd
     guiSprite->fillSprite(TFT_BLACK);
 
     // --- Header ---
-    drawVGradient(guiSprite, 0, 0, W, HEADER_H, headerStart, headerEnd);
+    drawVGradient(guiSprite, 0, 0, W, HEADER_H, 0, 100, 0, 0, 40, 0);
     guiSprite->setTextColor(TFT_WHITE);
     guiSprite->setCursor(4, 3);
     if (filteredCount > 0) {
@@ -535,6 +550,7 @@ void DisplayManager::drawActiveGUI(const TaskItem tasks[], const int filteredInd
 
         if (selected) {
             targetSelectionY = y;
+            currentSelectionY = targetSelectionY;
         }
 
         char line[40];
@@ -558,9 +574,7 @@ void DisplayManager::drawActiveGUI(const TaskItem tasks[], const int filteredInd
     if (selectedIndex >= 0 && selectedIndex >= topIndex && selectedIndex < windowEnd) {
         int realIdx = filteredIndices[selectedIndex];
         // Use currentSelectionY for the sliding effect
-        uint16_t barStart = TFT_WHITE;
-        uint16_t barEnd = guiSprite->color565(200, 200, 255);
-        drawVGradient(guiSprite, 0, (int)currentSelectionY - 1, W - 12, LINE_H, barStart, barEnd);
+        drawVGradient(guiSprite, 0, (int)currentSelectionY - 1, W - 12, LINE_H, 255, 255, 255, 200, 200, 255);
         
         // Re-draw the selected text on top of the sliding bar
         int row = selectedIndex - topIndex;
@@ -590,10 +604,11 @@ void DisplayManager::drawActiveGUI(const TaskItem tasks[], const int filteredInd
     }
 
     // --- Footer ---
-    const uint16_t footerStart = listFull ? guiSprite->color565(140, 0, 0) : headerStart;
-    const uint16_t footerEnd   = listFull ? guiSprite->color565(60, 0, 0) : headerEnd;
-    
-    drawVGradient(guiSprite, 0, H - FOOTER_H, W, FOOTER_H, footerStart, footerEnd);
+    if (listFull) {
+        drawVGradient(guiSprite, 0, H - FOOTER_H, W, FOOTER_H, 140, 0, 0, 60, 0, 0);
+    } else {
+        drawVGradient(guiSprite, 0, H - FOOTER_H, W, FOOTER_H, 0, 100, 0, 0, 40, 0);
+    }
     guiSprite->setTextColor(TFT_WHITE);
     guiSprite->setCursor(4, H - FOOTER_H + 6);
     if (listFull) {
@@ -620,13 +635,11 @@ void DisplayManager::drawAddViewGUI(const char* currentInput, int cursorIdx, int
 
     const int W = guiSprite->width();
     const int H = guiSprite->height();
-    const uint16_t headerStart = guiSprite->color565(0, 0, 140);
-    const uint16_t headerEnd   = guiSprite->color565(0, 0, 60);
 
     guiSprite->fillSprite(TFT_BLACK);
 
     // Header
-    drawVGradient(guiSprite, 0, 0, W, HEADER_H, headerStart, headerEnd);
+    drawVGradient(guiSprite, 0, 0, W, HEADER_H, 0, 100, 0, 0, 40, 0);
     guiSprite->setTextColor(TFT_WHITE);
     guiSprite->setCursor(4, 3);
     guiSprite->print("== NEW TASK ==");
@@ -692,7 +705,7 @@ void DisplayManager::drawAddViewGUI(const char* currentInput, int cursorIdx, int
     }
 
     // Footer
-    drawVGradient(guiSprite, 0, H - FOOTER_H, W, FOOTER_H, headerStart, headerEnd);
+    drawVGradient(guiSprite, 0, H - FOOTER_H, W, FOOTER_H, 0, 0, 140, 0, 0, 60);
     guiSprite->setTextColor(TFT_WHITE);
     guiSprite->setCursor(4, H - FOOTER_H + 6);
     guiSprite->print("[ENT]NEXT [BS]BACK");
@@ -705,13 +718,11 @@ void DisplayManager::drawEditViewGUI(const char* currentInput, int cursorIdx, in
 
     const int W = guiSprite->width();
     const int H = guiSprite->height();
-    const uint16_t headerStart = guiSprite->color565(0, 0, 140);
-    const uint16_t headerEnd   = guiSprite->color565(0, 0, 60);
 
     guiSprite->fillSprite(TFT_BLACK);
 
     // Header
-    drawVGradient(guiSprite, 0, 0, W, HEADER_H, headerStart, headerEnd);
+    drawVGradient(guiSprite, 0, 0, W, HEADER_H, 0, 100, 0, 0, 40, 0);
     guiSprite->setTextColor(TFT_WHITE);
     guiSprite->setCursor(4, 3);
     guiSprite->print("== EDIT TASK ==");
@@ -777,7 +788,7 @@ void DisplayManager::drawEditViewGUI(const char* currentInput, int cursorIdx, in
     }
 
     // Footer
-    drawVGradient(guiSprite, 0, H - FOOTER_H, W, FOOTER_H, headerStart, headerEnd);
+    drawVGradient(guiSprite, 0, H - FOOTER_H, W, FOOTER_H, 0, 0, 140, 0, 0, 60);
     guiSprite->setTextColor(TFT_WHITE);
     guiSprite->setCursor(4, H - FOOTER_H + 6);
     guiSprite->print("[ENT]NEXT [BS]BACK");
@@ -790,13 +801,11 @@ void DisplayManager::drawQuickAddGUI(const char* currentInput, int cursorIdx) {
 
     const int W = guiSprite->width();
     const int H = guiSprite->height();
-    const uint16_t headerStart = guiSprite->color565(0, 0, 140);
-    const uint16_t headerEnd   = guiSprite->color565(0, 0, 60);
 
     guiSprite->fillSprite(TFT_BLACK);
 
     // Header
-    drawVGradient(guiSprite, 0, 0, W, HEADER_H, headerStart, headerEnd);
+    drawVGradient(guiSprite, 0, 0, W, HEADER_H, 0, 0, 140, 0, 0, 60);
     guiSprite->setTextColor(TFT_WHITE);
     guiSprite->setCursor(4, 3);
     guiSprite->print("== QUICK ADD ==");
@@ -969,13 +978,11 @@ void DisplayManager::drawCalendarGUI(CalendarView view, int year, int month, int
 
     const int W = guiSprite->width();
     const int H = guiSprite->height();
-    const uint16_t headerStart = guiSprite->color565(0, 100, 0); // Calendar green
-    const uint16_t headerEnd   = guiSprite->color565(0, 40, 0);
 
     guiSprite->fillSprite(TFT_BLACK);
 
-    // --- Header ---
-    drawVGradient(guiSprite, 0, 0, W, HEADER_H, headerStart, headerEnd);
+    // Header
+    drawVGradient(guiSprite, 0, 0, W, HEADER_H, 0, 100, 0, 0, 40, 0);
     guiSprite->setTextColor(TFT_WHITE);
     guiSprite->setCursor(4, 3);
     char headerBuf[32];
@@ -1207,7 +1214,7 @@ void DisplayManager::drawEventDetailGUI(const CalendarEvent& event, int scrollOf
     }
 
     // --- Header ---
-    drawVGradient(guiSprite, 0, 0, W, HEADER_H, headerStart, headerEnd);
+    drawVGradient(guiSprite, 0, 0, W, HEADER_H, 0, 100, 0, 0, 40, 0);
     guiSprite->setTextColor(TFT_WHITE);
     guiSprite->setCursor(4, 3);
     guiSprite->print("EVENT DETAILS");
@@ -1225,7 +1232,7 @@ void DisplayManager::drawEventDetailGUI(const CalendarEvent& event, int scrollOf
     }
 
     // --- Footer ---
-    drawVGradient(guiSprite, 0, H - FOOTER_H, W, FOOTER_H, headerStart, headerEnd);
+    drawVGradient(guiSprite, 0, H - FOOTER_H, W, FOOTER_H, 0, 100, 0, 0, 40, 0);
     guiSprite->setTextColor(TFT_WHITE);
     guiSprite->setCursor(4, H - FOOTER_H + 6);
     guiSprite->print("UP/DN:Scroll BS:Back");
@@ -1237,13 +1244,11 @@ void DisplayManager::drawHelpGUI(SystemState fromState) {
     if (!guiSprite) return;
     const int W = guiSprite->width();
     const int H = guiSprite->height();
-    const uint16_t headerStart = guiSprite->color565(80, 80, 80);
-    const uint16_t headerEnd   = guiSprite->color565(30, 30, 30);
 
     guiSprite->fillSprite(TFT_BLACK);
 
     // Header
-    drawVGradient(guiSprite, 0, 0, W, HEADER_H, headerStart, headerEnd);
+    drawVGradient(guiSprite, 0, 0, W, HEADER_H, 80, 80, 80, 30, 30, 30);
     guiSprite->setTextColor(TFT_WHITE);
     guiSprite->setCursor(4, 3);
     guiSprite->print("HELP & KEYBINDINGS");
@@ -1292,13 +1297,11 @@ void DisplayManager::drawAddEventGUI(const char* title, int cursorIdx, int hour,
     if (!guiSprite) return;
     const int W = guiSprite->width();
     const int H = guiSprite->height();
-    const uint16_t headerStart = guiSprite->color565(0, 100, 0);
-    const uint16_t headerEnd   = guiSprite->color565(0, 40, 0);
 
     guiSprite->fillSprite(TFT_BLACK);
 
     // Header
-    drawVGradient(guiSprite, 0, 0, W, HEADER_H, headerStart, headerEnd);
+    drawVGradient(guiSprite, 0, 0, W, HEADER_H, 0, 100, 0, 0, 40, 0);
     guiSprite->setTextColor(TFT_WHITE);
     guiSprite->setCursor(4, 3);
     guiSprite->print("ADD CALENDAR EVENT");
@@ -1346,7 +1349,7 @@ void DisplayManager::drawAddEventGUI(const char* title, int cursorIdx, int hour,
     }
 
     // Footer
-    drawVGradient(guiSprite, 0, H - FOOTER_H, W, FOOTER_H, headerStart, headerEnd);
+    drawVGradient(guiSprite, 0, H - FOOTER_H, W, FOOTER_H, 0, 100, 0, 0, 40, 0);
     guiSprite->setTextColor(TFT_WHITE);
     guiSprite->setCursor(4, H - FOOTER_H + 6);
     guiSprite->print("[ENT]SAVE  [ESC]CANCEL");
@@ -1364,8 +1367,8 @@ void DisplayManager::setTFTBrightness(uint8_t brightness) {
 }
 
 void DisplayManager::drawSettingsGUI(int selectedItem, uint8_t brightness, uint16_t sleepTimeout, const char* wifiSSID, const char* wifiPassword, const char* gcalURL, bool isEditingSetting, const char* inputBuffer, int cursorIdx, bool isLowPowerMode) {
-    if (!tftOn) return;
-
+    if (!guiSprite) return;
+    guiSprite->setTextSize(1); // Reset to base size
     guiSprite->fillSprite(TFT_BLACK);
 
     // Title Bar
@@ -1403,11 +1406,12 @@ void DisplayManager::drawSettingsGUI(int selectedItem, uint8_t brightness, uint1
         if (y < 20 || y > 110) continue; // Skip drawing items outside the viewable area
 
         if (i == selectedItem) {
-            guiSprite->fillRect(0, y - 8, 160, itemHeight, 0x3186); // Dark Gray
+            uint16_t selBG = 0x3186; // Dark Gray
+            guiSprite->fillRect(0, y - 8, 160, itemHeight, selBG);
             guiSprite->drawRect(0, y - 8, 160, itemHeight, TFT_ORANGE);
-            guiSprite->setTextColor(TFT_ORANGE);
+            guiSprite->setTextColor(TFT_ORANGE, selBG);
         } else {
-            guiSprite->setTextColor(TFT_WHITE);
+            guiSprite->setTextColor(TFT_WHITE, TFT_BLACK);
         }
 
         guiSprite->drawString(labels[i], 5, y);
@@ -1476,8 +1480,9 @@ void DisplayManager::drawSettingsGUI(int selectedItem, uint8_t brightness, uint1
 void DisplayManager::drawInputBox(int x, int y, int w, int h, const char* text, int cursorIdx, bool isActive) {
     if (!guiSprite) return;
     
-    guiSprite->fillRect(x, y, w, h, isActive ? TFT_WHITE : TFT_DARKGREY);
-    guiSprite->setTextColor(isActive ? TFT_BLACK : TFT_WHITE, isActive ? TFT_WHITE : TFT_DARKGREY);
+    uint16_t bgInactive = guiSprite->color565(64, 64, 64);
+    guiSprite->fillRect(x, y, w, h, isActive ? TFT_WHITE : bgInactive);
+    guiSprite->setTextColor(isActive ? TFT_BLACK : TFT_WHITE, isActive ? TFT_WHITE : bgInactive);
     
     int maxVisible = (w - 8) / 6; // glyph width is 6
     int textLen = strlen(text);
@@ -1503,9 +1508,6 @@ void DisplayManager::drawInputBox(int x, int y, int w, int h, const char* text, 
             int cursorX = x + 4 + relCursorPos * 6;
             if (cursorX < x + w - 2) {
                 guiSprite->drawFastVLine(cursorX, y + 2, h - 4, TFT_BLACK);
-                if (relCursorPos == (int)strlen(displayBuf)) {
-                    guiSprite->drawFastHLine(cursorX, y + h - 3, 5, TFT_BLACK);
-                }
             }
         }
     }
@@ -1513,18 +1515,17 @@ void DisplayManager::drawInputBox(int x, int y, int w, int h, const char* text, 
 
 void DisplayManager::drawPomodoroGUI(int workMins, int breakMins, bool isRunning, bool isWorkMode, uint32_t secondsRemaining, int activeField, int selectedTaskId, const TaskItem tasks[], uint32_t taskCount) {
     if (!guiSprite) return;
-
+    guiSprite->setTextSize(1); // Reset to base size
+    
     const int W = guiSprite->width();
     const int H = guiSprite->height();
-    const uint16_t headerStart = guiSprite->color565(220, 30, 30); // Vibrant Red
-    const uint16_t headerEnd   = guiSprite->color565(120, 0, 0);
     const uint16_t selectColor = guiSprite->color565(255, 200, 0); // Golden Yellow
-    const uint16_t idleColor   = guiSprite->color565(60, 60, 60);
+    const uint16_t idleColor   = guiSprite->color565(160, 160, 160); // Medium-Light Gray
 
     guiSprite->fillSprite(TFT_BLACK);
 
     // Header
-    drawVGradient(guiSprite, 0, 0, W, HEADER_H, headerStart, headerEnd);
+    drawVGradient(guiSprite, 0, 0, W, HEADER_H, 220, 30, 30, 120, 0, 0);
     guiSprite->setTextColor(TFT_WHITE);
     guiSprite->setCursor(4, 3);
     guiSprite->print("Focus Timer");
@@ -1539,7 +1540,7 @@ void DisplayManager::drawPomodoroGUI(int workMins, int breakMins, bool isRunning
         
         uint16_t bgColor = (activeField == fieldIdx) ? selectColor : idleColor;
         guiSprite->fillRoundRect(70, y - 2, W - 80, 15, 3, bgColor);
-        guiSprite->setTextColor(activeField == fieldIdx ? TFT_BLACK : TFT_WHITE);
+        guiSprite->setTextColor(TFT_BLACK, bgColor); // Always black text inside fields
         guiSprite->setCursor(75, y);
         guiSprite->print(value);
     };
@@ -1567,7 +1568,7 @@ void DisplayManager::drawPomodoroGUI(int workMins, int breakMins, bool isRunning
 
     // Status / Timer
     if (isRunning) {
-        guiSprite->setTextColor(isWorkMode ? TFT_RED : TFT_GREEN);
+        guiSprite->setTextColor(isWorkMode ? TFT_RED : TFT_GREEN, TFT_BLACK);
         guiSprite->setCursor(W / 2 - 35, curY);
         guiSprite->setTextSize(2);
         guiSprite->printf("%02d:%02d", secondsRemaining / 60, secondsRemaining % 60);
@@ -1577,13 +1578,13 @@ void DisplayManager::drawPomodoroGUI(int workMins, int breakMins, bool isRunning
     } else {
         uint16_t btnColor = (activeField == 3) ? selectColor : idleColor;
         guiSprite->fillRoundRect(W / 2 - 40, curY, 80, 20, 5, btnColor);
-        guiSprite->setTextColor(activeField == 3 ? TFT_BLACK : TFT_WHITE);
+        guiSprite->setTextColor(TFT_BLACK, btnColor); // Always black text inside button
         guiSprite->setCursor(W / 2 - 15, curY + 6);
         guiSprite->print("START");
     }
 
     // Footer
-    drawVGradient(guiSprite, 0, H - FOOTER_H, W, FOOTER_H, headerStart, headerEnd);
+    drawVGradient(guiSprite, 0, H - FOOTER_H, W, FOOTER_H, 140, 0, 0, 60, 0, 0);
     guiSprite->setTextColor(TFT_WHITE);
     guiSprite->setCursor(4, H - FOOTER_H + 6);
     guiSprite->print("[ENT]Select [BS]Exit");
@@ -1593,8 +1594,16 @@ void DisplayManager::drawPomodoroGUI(int workMins, int breakMins, bool isRunning
 
 void DisplayManager::drawEpaperPomodoro(int minutes, int seconds, bool isWorkMode, const char* taskTitle, bool fullRefresh) {
     // Re-assert ePaper SPI bus
+    pinMode(Pins::LCD_CS, OUTPUT);
+    digitalWrite(Pins::LCD_CS, HIGH); // Ensure TFT is not listening
+
+    // Power on SPI and give it a moment to stabilize
+    SPI.end(); // Clear any previous state
     SPI.begin(Pins::EP_SCK, -1, Pins::EP_MOSI, Pins::EP_CS);
-    epd.init(115200);
+    delay(100);
+    
+    epd.init(115200, fullRefresh);
+    delay(300); // Increased initialization delay
     epd.setRotation(1);
     
     const int W = epd.width();

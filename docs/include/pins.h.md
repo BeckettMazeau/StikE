@@ -8,7 +8,6 @@ The definitions are organized within the `Pins` namespace.
 
 **General Notes:**
 - OPI PSRAM pins (35, 36, 37) are reserved.
-- RGB LED is on GPIO 38, 48.
 - USB D-/D+ are on GPIO 19, 20.
 - Strapping pins are 0, 3, 45, 46.
 

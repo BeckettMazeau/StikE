@@ -61,7 +61,8 @@ enum class SystemEventType {
     EVENT_BACKSPACE,
     EVENT_CANCEL,
     SLEEP_REQ,
-    WAKE_REQ
+    WAKE_REQ,
+    EVENT_TOGGLE_DEMO
 };
 
 enum class TaskViewMode {
@@ -103,7 +104,7 @@ struct TaskItem {
 };
 
 constexpr uint32_t MAX_TASKS = 20;
-constexpr uint32_t MAX_CALENDAR_EVENTS = 50;
+constexpr uint32_t MAX_CALENDAR_EVENTS = 100;
 
 enum class EpaperViewType {
     TASK,

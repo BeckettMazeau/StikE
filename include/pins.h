@@ -5,7 +5,7 @@
 namespace Pins {
 
 // OPI PSRAM pins (35, 36, 37) are reserved for 8MB Octal PSRAM - NOT available for external use
-// RGB LED on GPIO 38, 48 | USB D-/D+ on GPIO 19, 20 | Strapping pins 0, 3, 45, 46
+// USB D-/D+ on GPIO 19, 20 | Strapping pins 0, 3, 45, 46
 
 // ePaper (GDEQ0213B74) - Hardware SPI via global SPI object (FSPI, SPI2 on S3)
 // SCK=5, MOSI=6 match DualDisplayTest reference wiring — confirm against your hardware
